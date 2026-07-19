@@ -42,9 +42,15 @@ State flows via the `@Observable` + `@Environment` pattern (no `ObservableObject
 
 ### Invariants worth preserving
 
+Each of these fixed a real bug; changing them will bring it back.
+
 - `CullSession` serializes server work **per asset** (`pendingOperations`), so an undo can never overtake the action it reverses — without this, a fast swipe-then-undo can leave an asset trashed on the server.
-- Permanently deleted assets are dropped from the undo stack (`forgetTrashedAssets`); restoring them would fail.
+- Permanently deleted assets are dropped from the undo stack (`forgetTrashedAssets`); restoring them would fail. Restores go through the same path so the session tally stays right.
 - Going "back" (undo / previous image) always rolls back that asset's action. Re-showing a trashed asset without restoring it would desync the queue from the server.
+- **Immich's `/assets/statistics` lags behind writes.** The trash badge therefore reads it *once* per session (`trashBaseline`) and is maintained locally as `baseline + session.trashedCount`. Re-reading it after each mutation makes the badge stale — and worse, overwrites the correct local count with the stale one.
+- Deck cards are rendered from a `ForEach` keyed on **asset ID**, so the incoming card keeps its identity — and its already-loaded image — when the queue advances. Rebuilding it (e.g. separate `if let current` / `if let next` branches) makes the photo flicker as `RemoteImageView` reloads.
+- Drag state freezes during the commit animation (`committingAction`). The release animation sweeps `dragOffset` sideways, so recomputing the action from it mid-flight flips the marker to whatever the horizontal direction maps to.
+- `AssetCardView` letterboxing uses `.background(.background)`, not a hardcoded colour, so photos sit on white in light mode.
 
 ## Testing
 
@@ -57,7 +63,11 @@ xcodebuild test -project ImmichCull.xcodeproj -scheme ImmichCull \
   -only-testing:ImmichCullUITests/CleanupFlowTests
 ```
 
-Run the suite via the `test-runner` subagent, not inline. `RealServerSmokeTests` auto-skips unless `REAL_SERVER_URL` / `REAL_SERVER_API_KEY` are set.
+Run the suite via the `test-runner` subagent, not inline.
+
+`RealServerSmokeTests` runs end-to-end against a real Immich server and auto-skips unless `REAL_SERVER_URL` / `REAL_SERVER_API_KEY` are set (pass them as `TEST_RUNNER_`-prefixed env vars so xcodebuild forwards them to the app). It covers album loading, trash → badge grows → undo → badge shrinks, and next/previous image.
+
+**It must stay non-destructive.** Reverse every mutation, and reverse it via the app's own Undo rather than selecting items in the trash bin — the bin contains assets the user binned deliberately, and "Select All" there would restore them too. Never permanently delete against a real server. Assert badge *deltas*, never absolute counts, since the bin's contents vary between runs.
 
 The app exposes launch hooks for tests (see `SettingsStore.init`): `--uitest-reset` clears stored state; env vars `UITEST_SERVER_URL`, `UITEST_API_KEY`, `UITEST_ALBUM_ID`/`UITEST_ALBUM_NAME` preconfigure a connected session.
 
