@@ -8,28 +8,30 @@ struct TrashBinToolbarButton: View {
     var identifier: String = "trashBinButton"
     let action: () -> Void
 
+    /// Square, so the glyph has the same slack on every side and the badge has
+    /// a corner to sit in without pushing anything around.
+    private static let box: CGFloat = 38
+
     var body: some View {
         Button(action: action) {
-            // The badge sits inside the button's own bounds — insetting the
-            // glyph instead of offsetting the badge keeps it from being clipped.
-            // The inset is symmetric so the glyph stays optically centred next
-            // to its neighbours whether or not a badge is showing; the badge
-            // overlaps the padding rather than pushing the icon down and left.
-            ZStack(alignment: .topTrailing) {
-                Image(systemName: "trash")
-                    .padding(.vertical, 6)
-                    .padding(.horizontal, 8)
-                if count > 0 {
-                    Text(count, format: .number)
-                        .font(.system(size: 11, weight: .bold))
-                        .monospacedDigit()
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 4)
-                        .frame(minWidth: 17, minHeight: 17)
-                        .background(.red, in: .capsule)
+            // A fixed square box, with the badge as an overlay that can't affect
+            // layout: the glyph is then centred by construction, badge or no
+            // badge, so it lines up with its plain neighbours in the toolbar.
+            // The badge lives inside the box for the same reason as before —
+            // offsetting it outside the button's bounds gets it clipped.
+            Image(systemName: "trash")
+                .frame(width: Self.box, height: Self.box)
+                .overlay(alignment: .topTrailing) {
+                    if count > 0 {
+                        Text(count, format: .number)
+                            .font(.system(size: 10, weight: .bold))
+                            .monospacedDigit()
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 4)
+                            .frame(minWidth: 16, minHeight: 16)
+                            .background(.red, in: .capsule)
+                    }
                 }
-            }
-            .fixedSize()
         }
         .accessibilityLabel(accessibilityText)
         .accessibilityIdentifier(identifier)
