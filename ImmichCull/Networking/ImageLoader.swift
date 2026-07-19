@@ -24,8 +24,11 @@ final class ImageLoader: Sendable {
         var request = URLRequest(url: url)
         request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
         let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
-              let image = UIImage(data: data) else {
+        guard let http = response as? HTTPURLResponse else { throw ImmichError.badResponse }
+        // Immich 404s previews it hasn't generated (and assets that are gone),
+        // which callers handle by falling back to the original.
+        guard http.statusCode != 404 else { throw ImmichError.notFound }
+        guard (200..<300).contains(http.statusCode), let image = UIImage(data: data) else {
             throw ImmichError.badResponse
         }
         return image.preparingForDisplay() ?? image

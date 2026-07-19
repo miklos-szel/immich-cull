@@ -4,6 +4,7 @@ import XCTest
 final class CullFlowTests: XCTestCase {
     @MainActor
     func testConnectSelectAlbumAndCull() throws {
+        resetMockServer()
         let app = XCUIApplication()
         app.launchArguments = ["--uitest-reset"]
         // Deterministic mock ID (uuid5 of "immich-mock-album-keepers"); avoids
