@@ -12,6 +12,8 @@ struct HomeView: View {
     @State private var entireRollSelected = true
     @State private var activeSelection: AlbumSelection?
     @State private var isShowingSettings = false
+    @State private var isShowingTrashBin = false
+    @State private var trashCount = 0
     /// Cleanup screens are pushed onto this path; emptying it means we're back
     /// on Home, which is one of the points where album counts may be stale.
     @State private var cleanupPath: [CleanupRoute] = []
@@ -36,6 +38,13 @@ struct HomeView: View {
             .navigationTitle("immich-cull")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
+                    TrashBinToolbarButton(
+                        count: trashCount,
+                        identifier: "homeTrashBinButton",
+                        action: showTrashBin
+                    )
+                }
+                ToolbarItem(placement: .topBarTrailing) {
                     Button("Settings", systemImage: "gearshape", action: showSettings)
                 }
             }
@@ -44,23 +53,36 @@ struct HomeView: View {
             }
             // Anything that can trash assets or change album membership
             // refreshes the list on the way back, so counts stay truthful.
-            .sheet(isPresented: $isShowingSettings, onDismiss: refreshAlbums) {
+            .sheet(isPresented: $isShowingSettings, onDismiss: refreshHome) {
                 SettingsView()
             }
-            .fullScreenCover(item: $activeSelection, onDismiss: refreshAlbums) { selection in
+            .sheet(isPresented: $isShowingTrashBin, onDismiss: refreshAlbums) {
+                if let client = settings.client {
+                    // The badge drops locally rather than by refetching: Immich's
+                    // statistics endpoint lags writes, so an immediate re-read
+                    // would report the pre-restore total.
+                    TrashBinView(client: client) { ids in
+                        trashCount = max(0, trashCount - ids.count)
+                    }
+                }
+            }
+            .fullScreenCover(item: $activeSelection, onDismiss: refreshHome) { selection in
                 CullView(selection: selection)
             }
             .navigationDestination(for: CleanupRoute.self) { route in
                 CleanupDestinationView(route: route)
             }
             .onChange(of: cleanupPath) { _, path in
-                if path.isEmpty { refreshAlbums() }
+                if path.isEmpty { refreshHome() }
             }
             // Catches edits made elsewhere (e.g. the Immich web UI).
             .onChange(of: scenePhase) { _, phase in
-                if phase == .active { refreshAlbums() }
+                if phase == .active { refreshHome() }
             }
-            .task { await loadAlbums() }
+            .task {
+                await loadAlbums()
+                await refreshTrashCount()
+            }
         }
     }
 
@@ -97,8 +119,6 @@ struct HomeView: View {
                         toggle: { toggle(album) }
                     )
                 }
-            } header: {
-                Text("What to cull")
             } footer: {
                 if albums.isEmpty {
                     Text("No albums on this server. You can still cull the entire roll.")
@@ -164,6 +184,10 @@ struct HomeView: View {
         isShowingSettings = true
     }
 
+    private func showTrashBin() {
+        isShowingTrashBin = true
+    }
+
     private func reload() {
         isLoading = true
         loadError = nil
@@ -173,6 +197,23 @@ struct HomeView: View {
     /// Silent reload — no spinner, since the list is already on screen.
     private func refreshAlbums() {
         Task { await loadAlbums() }
+    }
+
+    private func refreshHome() {
+        Task {
+            await loadAlbums()
+            await refreshTrashCount()
+        }
+    }
+
+    /// Deliberately not called when the trash sheet closes: that sheet already
+    /// reported what left the bin, and re-reading the lagging statistics
+    /// endpoint would put the stale total back.
+    private func refreshTrashCount() async {
+        guard let client = settings.client else { return }
+        if let stats = try? await client.trashStatistics() {
+            trashCount = stats.total
+        }
     }
 
     private func loadAlbums() async {

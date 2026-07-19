@@ -3,6 +3,9 @@ import SwiftUI
 /// Trash-bin toolbar button with a red badge showing how many items are in the Immich trash.
 struct TrashBinToolbarButton: View {
     let count: Int
+    /// Distinct per screen: the cull deck presents over Home, so both buttons are
+    /// in the hierarchy at once and UI tests need to tell them apart.
+    var identifier: String = "trashBinButton"
     let action: () -> Void
 
     var body: some View {
@@ -26,7 +29,7 @@ struct TrashBinToolbarButton: View {
             .fixedSize()
         }
         .accessibilityLabel(accessibilityText)
-        .accessibilityIdentifier("trashBinButton")
+        .accessibilityIdentifier(identifier)
     }
 
     private var accessibilityText: String {

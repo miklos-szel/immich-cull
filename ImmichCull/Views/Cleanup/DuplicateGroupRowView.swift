@@ -21,12 +21,25 @@ struct DuplicateGroupRowView: View {
                             toggle: { toggle(asset) }
                         )
                         .frame(width: 96)
+                        .dragSelectCell(id: asset.id)
                     }
                 }
             }
             .scrollIndicators(.hidden)
+            .dragSelection(
+                isSelected: { selectedIDs.contains($0) },
+                onPaint: setSelected
+            )
         }
         .padding(.vertical, 4)
+    }
+
+    private func setSelected(_ id: String, _ isSelected: Bool) {
+        if isSelected {
+            selectedIDs.insert(id)
+        } else {
+            selectedIDs.remove(id)
+        }
     }
 
     private func toggle(_ asset: ImmichAsset) {

@@ -78,10 +78,15 @@ struct TrashBinView: View {
                         client: client,
                         toggle: { toggle(asset) }
                     )
+                    .dragSelectCell(id: asset.id)
                 }
             }
             .padding(.horizontal, 4)
         }
+        .dragSelection(
+            isSelected: { selectedIDs.contains($0) },
+            onPaint: setSelected
+        )
     }
 
     private var actionBar: some View {
@@ -126,6 +131,14 @@ struct TrashBinView: View {
             selectedIDs.remove(asset.id)
         } else {
             selectedIDs.insert(asset.id)
+        }
+    }
+
+    private func setSelected(_ id: String, _ isSelected: Bool) {
+        if isSelected {
+            selectedIDs.insert(id)
+        } else {
+            selectedIDs.remove(id)
         }
     }
 
