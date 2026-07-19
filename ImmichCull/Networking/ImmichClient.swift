@@ -38,9 +38,11 @@ struct ImmichClient: Sendable {
     }
 
     func searchAssets(page: Int, size: Int, order: String, albumIDs: [String]?, tagIDs: [String]?,
-                      trashedAfter: String? = nil, withDeleted: Bool? = nil) async throws -> SearchResult {
+                      trashedAfter: String? = nil, withDeleted: Bool? = nil,
+                      type: String? = nil) async throws -> SearchResult {
         let body = SearchRequest(albumIds: albumIDs, order: order, page: page, size: size, tagIds: tagIDs,
-                                 trashedAfter: trashedAfter, withDeleted: withDeleted, withExif: true)
+                                 trashedAfter: trashedAfter, type: type,
+                                 withDeleted: withDeleted, withExif: true)
         return try await decode(send("POST", "search/metadata", body: body))
     }
 
@@ -61,12 +63,14 @@ struct ImmichClient: Sendable {
     }
 
     /// Pages through metadata search until exhausted or `limit` is reached.
-    func fetchAssets(albumIDs: [String]?, tagIDs: [String]?, order: String, limit: Int) async throws -> [ImmichAsset] {
+    func fetchAssets(albumIDs: [String]?, tagIDs: [String]?, order: String, limit: Int,
+                     type: String? = nil) async throws -> [ImmichAsset] {
         var assets: [ImmichAsset] = []
         var page = 1
         while assets.count < limit {
             let size = min(250, limit - assets.count)
-            let result = try await searchAssets(page: page, size: size, order: order, albumIDs: albumIDs, tagIDs: tagIDs)
+            let result = try await searchAssets(page: page, size: size, order: order, albumIDs: albumIDs,
+                                                tagIDs: tagIDs, type: type)
             assets += result.assets.items.prefix(limit - assets.count)
             guard assets.count < limit,
                   let next = result.assets.nextPage, let nextPage = Int(next) else { break }
@@ -233,6 +237,8 @@ struct ImmichClient: Sendable {
         let size: Int
         let tagIds: [String]?
         let trashedAfter: String?
+        /// "IMAGE" or "VIDEO"; omitted entirely when both are wanted.
+        let type: String?
         let withDeleted: Bool?
         let withExif: Bool?
     }

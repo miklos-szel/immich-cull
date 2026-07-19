@@ -18,11 +18,11 @@ A native iOS app for quickly culling photos and videos on a self-hosted [Immich]
   Other assignable actions: **Favorite**, **Undo**, and **Do Nothing**. Stepping back to the previous image also rolls back whatever was done to it, so the queue and the server never drift apart.
 
 - **Reviewed photos stay reviewed.** Moving past an asset tags it in Immich (default tag: `culled`) so it isn't offered again on the next run. The tag name is configurable, and a toggle re-offers already-reviewed assets.
-- **Pick your scope.** Cull the entire roll (default) or select one or more albums. Pull to refresh the album list.
+- **Pick your scope.** Cull the entire roll (default) or select one or more albums. Pull to refresh the album list. Settings can also narrow a run to just photos or just videos.
 - **Videos included.** Video assets play muted inline while you review them.
 - **Undo anything.** Every action is reversible — undo restores from the trash, removes from the album, or clears the tag, on the server.
-- **Trash bin.** A red badge counts what's in the Immich trash, on the main screen and on the cull screen, where it updates the moment you swipe. Open it to review, restore, or permanently delete — emptying it clears the badge and drops those items from the undo history, since they can no longer be restored.
-- **Select by dragging.** In any thumbnail grid, press and hold a photo and then slide your finger: everything it passes over is selected. Start on a photo that's already selected and the same drag deselects instead.
+- **Trash bin.** A red badge counts what's in the Immich trash, on the main screen and on the cull screen, where it updates the moment you swipe. Open it to review, restore, or permanently delete — or **Empty Trash** to clear the lot in one step. Emptying clears the badge and drops those items from the undo history, since they can no longer be restored.
+- **Select by dragging.** In any thumbnail grid, press and hold a photo and then slide your finger, like the Photos app: everything between where you started and where your finger is gets selected, so dragging onto the next row takes the rest of the row with it. Drag back to release. Start on a photo that's already selected and the same drag deselects instead. Hold near the top or bottom edge and the grid scrolls along.
 - **Local cleanup.** Optionally remove the matching photo/video from the iPhone's own library when you trash it (matched by filename and capture date, deleted in one batch at the end of a session). Permanent deletes from the trash bin always remove local copies too.
 - **Stats.** Lifetime counters for deleted / reviewed / filed / favourited, plus the current server trash size, all in Settings.
 - **Appearance.** System (default), Light, or Dark — photos sit on a matching background rather than in a black box.

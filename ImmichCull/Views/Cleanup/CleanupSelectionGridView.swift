@@ -80,6 +80,7 @@ struct CleanupSelectionGridView: View {
             .padding(.horizontal, 4)
         }
         .dragSelection(
+            ids: assets.map(\.id),
             isSelected: { selectedIDs.contains($0) },
             onPaint: setSelected
         )

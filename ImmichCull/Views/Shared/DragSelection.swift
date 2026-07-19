@@ -1,27 +1,39 @@
 import SwiftUI
 
 /// Photos-app style "paint" selection: press and hold a cell, then slide the
-/// finger across the grid to select (or deselect) everything it passes over.
+/// finger to extend the selection to everything between that cell and the one
+/// under the finger — so dragging onto a second row takes the rest of the first
+/// row with it. Dragging back up again releases what it passes.
 ///
 /// Cells publish their frames through a preference; the container hit-tests the
-/// drag location against them. Attaching the gesture with `simultaneousGesture`
-/// is what keeps the existing interactions alive — a plain swipe still scrolls,
-/// and a plain tap still activates the cell's own button.
+/// drag location against them and works in **index ranges**, not individual
+/// cells, so a fast drag can't skip anything it flew over.
 enum DragSelection {
     static let coordinateSpace = "dragSelection"
     /// Long enough not to fire while flicking through the grid, short enough
     /// that it doesn't feel like a stall.
     static let pressDuration = 0.3
+    /// How close to the container edge the finger must get to start scrolling.
+    static let autoScrollMargin: CGFloat = 80
+    static let autoScrollInterval = Duration.milliseconds(150)
 }
 
 /// Frames of the currently laid-out cells, keyed by selection ID. `LazyVGrid`
-/// only builds visible cells, so this holds the on-screen ones — which is all a
-/// paint gesture can reach anyway.
+/// only builds visible cells, so this holds the on-screen ones.
 struct DragSelectionFrameKey: PreferenceKey {
     static var defaultValue: [String: CGRect] { [:] }
 
     static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
         value.merge(nextValue()) { _, new in new }
+    }
+}
+
+/// The scrollable container's own bounds, for deciding when to auto-scroll.
+struct DragSelectionBoundsKey: PreferenceKey {
+    static var defaultValue: CGRect { .zero }
+
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+        value = nextValue()
     }
 }
 
@@ -36,44 +48,90 @@ extension View {
                 )
             }
         }
+        .id(id)
     }
 
-    /// Enables paint selection over the cells inside this container.
+    /// Enables paint selection over the cells inside this scrollable container.
     ///
     /// - Parameters:
+    ///   - ids: every cell's ID **in display order** — the order the range is
+    ///     filled in. Only the on-screen ones need to be laid out.
     ///   - isEnabled: `false` leaves the container's gestures untouched.
     ///   - isSelected: current state of a cell, used to decide whether the
     ///     gesture selects or deselects.
-    ///   - onPaint: called once per cell the finger enters, with the state that
-    ///     cell should take.
+    ///   - onPaint: called for each cell entering or leaving the dragged range,
+    ///     with the state that cell should take.
     func dragSelection(
+        ids: [String],
         isEnabled: Bool = true,
         isSelected: @escaping (String) -> Bool,
         onPaint: @escaping (String, Bool) -> Void
     ) -> some View {
-        modifier(DragSelectionModifier(isEnabled: isEnabled, isSelected: isSelected, onPaint: onPaint))
+        modifier(DragSelectionModifier(
+            ids: ids,
+            isEnabled: isEnabled,
+            isSelected: isSelected,
+            onPaint: onPaint
+        ))
     }
 }
 
 private struct DragSelectionModifier: ViewModifier {
+    let ids: [String]
     let isEnabled: Bool
     let isSelected: (String) -> Bool
     let onPaint: (String, Bool) -> Void
 
     @State private var frames: [String: CGRect] = [:]
+    @State private var bounds: CGRect = .zero
     /// Whether this drag is selecting or deselecting — decided by the cell the
-    /// press landed on, then applied to every cell after it.
+    /// press landed on, then applied to the whole range behind it.
     @State private var paintMode: Bool?
-    /// Stops the value flapping while the finger jitters inside one cell.
-    @State private var lastPaintedID: String?
+    /// Where the drag started, in `ids` order. The range always runs from here.
+    @State private var anchorIndex: Int?
+    /// What the range covered last time, so shrinking the drag can undo the
+    /// part that's no longer covered.
+    @State private var paintedRange: ClosedRange<Int>?
+    /// Latest touch position, replayed after each auto-scroll step: the finger
+    /// is stationary then, so only the moving content changes what's under it.
+    @State private var lastLocation: CGPoint?
     @State private var feedback = 0
+    /// Set the moment the press is recognised, while the finger is still
+    /// stationary, so the container stops panning before the drag begins.
+    @State private var isPainting = false
+    /// -1 scrolls towards the start, +1 towards the end, 0 is idle.
+    @State private var autoScrollDirection = 0
 
     func body(content: Content) -> some View {
-        content
-            .coordinateSpace(name: DragSelection.coordinateSpace)
-            .onPreferenceChange(DragSelectionFrameKey.self) { frames = $0 }
-            .simultaneousGesture(paintGesture, including: isEnabled ? .all : .subviews)
-            .sensoryFeedback(.selection, trigger: feedback)
+        ScrollViewReader { proxy in
+            content
+                // No `scrollDisabled` here on purpose: UIKit ignores a scroll
+                // view being disabled mid-touch once its pan is already
+                // tracking, so the lock never worked. The gesture below keeps
+                // the touch away from the scroll view instead.
+                .coordinateSpace(name: DragSelection.coordinateSpace)
+                .background {
+                    GeometryReader { geometry in
+                        Color.clear.preference(
+                            key: DragSelectionBoundsKey.self,
+                            value: geometry.frame(in: .named(DragSelection.coordinateSpace))
+                        )
+                    }
+                }
+                // Pins the grid for the duration of a paint drag. This is what
+                // `.scrollDisabled` could not do — see ScrollPanDisabler.
+                .background { ScrollPanDisabler(isPaused: isPainting) }
+                .onPreferenceChange(DragSelectionBoundsKey.self) { bounds = $0 }
+                .onPreferenceChange(DragSelectionFrameKey.self) { frames = $0 }
+                // Stays `simultaneousGesture` so taps still reach the cells' own
+                // buttons; `highPriorityGesture` would pin the grid too, but it
+                // swallows every tap. The pan recognizer above does the pinning.
+                .simultaneousGesture(paintGesture, including: isEnabled ? .all : .subviews)
+                .sensoryFeedback(.selection, trigger: feedback)
+                .task(id: autoScrollDirection) {
+                    await autoScroll(using: proxy)
+                }
+        }
     }
 
     private var paintGesture: some Gesture {
@@ -83,31 +141,122 @@ private struct DragSelectionModifier: ViewModifier {
                 coordinateSpace: .named(DragSelection.coordinateSpace)
             ))
             .onChanged { value in
-                // `.second(_, nil)` is the press landing before the drag has
-                // reported a location yet; there's nothing to hit-test.
-                if case .second(_, let drag?) = value {
-                    paint(at: drag.location)
+                // `.second` means the press was held long enough. Lock scrolling
+                // here, while the finger is still stationary — the drag hasn't
+                // reported a location yet (`nil`), so there's nothing to paint.
+                guard case .second(_, let drag) = value else { return }
+                isPainting = true
+                if let drag {
+                    extendSelection(to: drag.location)
                 }
             }
             .onEnded { value in
                 // Covers a press-and-lift with no movement at all.
                 if case .second(_, let drag?) = value {
-                    paint(at: drag.location)
+                    extendSelection(to: drag.location)
                 }
+                isPainting = false
+                autoScrollDirection = 0
                 paintMode = nil
-                lastPaintedID = nil
+                anchorIndex = nil
+                paintedRange = nil
+                lastLocation = nil
             }
     }
 
-    private func paint(at location: CGPoint) {
-        guard let id = frames.first(where: { $0.value.contains(location) })?.key,
-              id != lastPaintedID else { return }
-        // The cell under the press decides the direction: land on an unselected
-        // photo and you paint selection, land on a selected one and you erase it.
-        let mode = paintMode ?? !isSelected(id)
-        paintMode = mode
-        lastPaintedID = id
+    // MARK: - Painting
+
+    private func extendSelection(to location: CGPoint) {
+        lastLocation = location
+        updateAutoScroll(for: location)
+        guard let index = index(at: location) else { return }
+
+        guard let anchorIndex, let paintMode else {
+            // First cell decides the direction: land on an unselected photo and
+            // the drag selects, land on a selected one and it clears.
+            let mode = !isSelected(ids[index])
+            self.anchorIndex = index
+            self.paintMode = mode
+            apply(mode, to: index...index)
+            paintedRange = index...index
+            feedback += 1
+            return
+        }
+
+        let range = min(anchorIndex, index)...max(anchorIndex, index)
+        guard range != paintedRange else { return }
+
+        // Anything the drag no longer covers goes back to how it started.
+        if let paintedRange {
+            for i in paintedRange where !range.contains(i) {
+                onPaint(ids[i], !paintMode)
+            }
+        }
+        // The whole range every time, not just the newly-entered part: painting
+        // is idempotent, and re-applying it means a cell that was missed once
+        // can't stay missed for the rest of the drag.
+        apply(paintMode, to: range)
+        paintedRange = range
         feedback += 1
-        onPaint(id, mode)
+    }
+
+    private func apply(_ mode: Bool, to range: ClosedRange<Int>) {
+        for i in range {
+            onPaint(ids[i], mode)
+        }
+    }
+
+    /// Nearest cell centre rather than `contains`. A point in the gap between
+    /// cells belongs to no frame at all, and a point on a shared edge belongs to
+    /// two — and `Dictionary.first(where:)` would pick between them arbitrarily,
+    /// which is how a press on the first cell could anchor on its neighbour.
+    private func index(at location: CGPoint) -> Int? {
+        var best: (index: Int, distance: CGFloat)?
+        for (id, frame) in frames {
+            guard let index = ids.firstIndex(of: id) else { continue }
+            let dx = location.x - frame.midX
+            let dy = location.y - frame.midY
+            let distance = (dx * dx) + (dy * dy)
+            if best == nil || distance < best!.distance {
+                best = (index, distance)
+            }
+        }
+        return best?.index
+    }
+
+    // MARK: - Auto-scroll
+
+    private func updateAutoScroll(for location: CGPoint) {
+        guard bounds.height > 0 else { return }
+        if location.y > bounds.maxY - DragSelection.autoScrollMargin {
+            autoScrollDirection = 1
+        } else if location.y < bounds.minY + DragSelection.autoScrollMargin {
+            autoScrollDirection = -1
+        } else {
+            autoScrollDirection = 0
+        }
+    }
+
+    private func autoScroll(using proxy: ScrollViewProxy) async {
+        guard autoScrollDirection != 0 else { return }
+        while !Task.isCancelled {
+            try? await Task.sleep(for: DragSelection.autoScrollInterval)
+            guard !Task.isCancelled, isPainting else { return }
+            // Step by a row's worth of cells past the leading edge of the range.
+            guard let edge = paintedRange.map({ autoScrollDirection > 0 ? $0.upperBound : $0.lowerBound }),
+                  !ids.isEmpty
+            else { return }
+            // Clamped, not bailed out: near the ends there's still a partial
+            // row to bring into view.
+            let target = min(max(edge + (autoScrollDirection * 3), 0), ids.count - 1)
+            guard target != edge else { return }
+            withAnimation(.linear(duration: 0.15)) {
+                proxy.scrollTo(ids[target], anchor: autoScrollDirection > 0 ? .bottom : .top)
+            }
+            // The finger hasn't moved, but the content under it has.
+            if let lastLocation {
+                extendSelection(to: lastLocation)
+            }
+        }
     }
 }

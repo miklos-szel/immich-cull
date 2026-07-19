@@ -19,6 +19,7 @@ final class CullSession {
     private let client: ImmichClient
     private let selection: AlbumSelection
     private let order: CullOrder
+    private let mediaFilter: MediaTypeFilter
     private let destinationAlbumID: String
     private let reOfferChecked: Bool
     private let checkedTagName: String
@@ -62,6 +63,7 @@ final class CullSession {
         self.selection = selection
         self.stats = stats
         order = settings.order
+        mediaFilter = settings.mediaFilter
         destinationAlbumID = settings.destinationAlbumID
         reOfferChecked = settings.reOfferChecked
         checkedTagName = settings.checkedTagName
@@ -330,7 +332,8 @@ final class CullSession {
     /// cannot shift server-side pagination underneath us.
     private func fetchAllAssets() async throws -> [ImmichAsset] {
         try await client.fetchAssets(albumIDs: selection.albumIDs, tagIDs: nil,
-                                     order: order.apiValue, limit: Self.maxAssets)
+                                     order: order.apiValue, limit: Self.maxAssets,
+                                     type: mediaFilter.searchType)
     }
 
     private func fetchCheckedIDs(tagID: String) async throws -> Set<String> {

@@ -27,6 +27,7 @@ struct DuplicateGroupRowView: View {
             }
             .scrollIndicators(.hidden)
             .dragSelection(
+                ids: group.assets.map(\.id),
                 isSelected: { selectedIDs.contains($0) },
                 onPaint: setSelected
             )
