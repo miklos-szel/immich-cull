@@ -23,6 +23,14 @@ extension XCTestCase {
         }
     }
 
+    /// Waits for an element's label to satisfy a predicate. Needed wherever a
+    /// label is driven by an async server round-trip (e.g. the trash badge).
+    @MainActor
+    func waitForLabel(_ element: XCUIElement, matching predicateFormat: String, timeout: TimeInterval = 20) {
+        expectation(for: NSPredicate(format: predicateFormat), evaluatedWith: element)
+        waitForExpectations(timeout: timeout)
+    }
+
     @MainActor
     func attachScreenshot(of app: XCUIApplication, named name: String) {
         let attachment = XCTAttachment(screenshot: app.screenshot())

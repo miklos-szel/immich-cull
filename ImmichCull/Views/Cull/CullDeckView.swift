@@ -1,8 +1,8 @@
 import SwiftUI
 
 /// The swipeable card deck plus footer controls. Swipe directions map to
-/// actions via Settings (defaults: up = trash, left = next image, down = album,
-/// right = undo).
+/// actions via Settings (defaults: up = trash, left = next image, down = add
+/// to album, right = previous image).
 ///
 /// The deck is a horizontal pager: the previous and next images sit one page to
 /// either side and track the finger 1:1, so committing an action slides the
@@ -14,51 +14,44 @@ struct CullDeckView: View {
     @Environment(SettingsStore.self) private var settings
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var dragOffset: CGSize = .zero
-    /// Keeps the banner's colour/label stable while it fades back out.
-    @State private var lastPendingAction: SwipeAction = .nextImage
+    /// Action being committed. While set, the drag state is frozen: the release
+    /// animation drives `dragOffset` sideways, and recomputing from it would
+    /// flip the trash marker to a different action mid-flight.
+    @State private var committingAction: SwipeAction?
 
     private static let threshold = 80.0
-    private static let pageGap = 16.0
+    /// Thin divider between pages while swiping, so the neighbouring image
+    /// sits right alongside rather than a wide gutter away.
+    private static let pageGap = 4.0
     /// Resistance applied when dragging toward a page that doesn't exist.
     private static let edgeResistance = 0.35
 
     var body: some View {
         VStack(spacing: 0) {
-            SwipeActionLineView(action: pendingAction ?? lastPendingAction,
-                                progress: pendingAction == nil ? 0 : dragProgress)
-                .padding(.horizontal)
-                .padding(.top, 8)
             deck
             footer
         }
         .sensoryFeedback(.impact(weight: .medium), trigger: session.reviewedCount)
-        .onChange(of: pendingAction) {
-            if let pendingAction {
-                lastPendingAction = pendingAction
-            }
-        }
     }
 
     private var deck: some View {
         GeometryReader { proxy in
             let page = proxy.size.width + Self.pageGap
-            let x = pagedOffset
             ZStack {
-                if let previous = session.previousAsset {
-                    AssetCardView(asset: previous, client: client, isTopCard: false)
-                        .offset(x: -page + x)
-                }
-                if let next = session.upNext {
-                    AssetCardView(asset: next, client: client, isTopCard: false)
-                        .offset(x: page + x)
-                }
-                if let current = session.current {
-                    AssetCardView(asset: current, client: client, isTopCard: true)
-                        .id(current.id)
-                        .offset(x: x, y: verticalOffset)
+                // Keyed by asset ID so a card keeps its identity — and its
+                // already-loaded image — when the queue advances underneath it.
+                // Rebuilding it here is what made the photo flicker.
+                ForEach(deckCards) { card in
+                    AssetCardView(asset: card.asset, client: client, isTopCard: card.slot == 0)
+                        .offset(x: offsetX(for: card.slot, page: page),
+                                y: card.slot == 0 ? verticalOffset : 0)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .overlay(alignment: .top) {
+                TrashMarkerView(progress: trashProgress)
+                    .padding(.top, 16)
+            }
             .contentShape(.rect)
             .gesture(dragGesture(page: page))
         }
@@ -89,6 +82,34 @@ struct CullDeckView: View {
         .padding(.vertical, 8)
     }
 
+    // MARK: Deck contents
+
+    /// One card per visible page: -1 previous, 0 current, +1 next.
+    private struct DeckCard: Identifiable {
+        let asset: ImmichAsset
+        let slot: Int
+        var id: String { asset.id }
+    }
+
+    private var deckCards: [DeckCard] {
+        var cards: [DeckCard] = []
+        var seen: Set<String> = []
+        if let previous = session.previousAsset, seen.insert(previous.id).inserted {
+            cards.append(DeckCard(asset: previous, slot: -1))
+        }
+        if let current = session.current, seen.insert(current.id).inserted {
+            cards.append(DeckCard(asset: current, slot: 0))
+        }
+        if let next = session.upNext, seen.insert(next.id).inserted {
+            cards.append(DeckCard(asset: next, slot: 1))
+        }
+        return cards
+    }
+
+    private func offsetX(for slot: Int, page: Double) -> Double {
+        Double(slot) * page + pagedOffset
+    }
+
     // MARK: Drag state
 
     /// Horizontal offset with rubber-banding when there is no page to reveal.
@@ -105,6 +126,8 @@ struct CullDeckView: View {
     }
 
     private var activeDirection: SwipeDirection? {
+        // Frozen while committing; see `committingAction`.
+        guard committingAction == nil else { return nil }
         guard max(abs(dragOffset.width), abs(dragOffset.height)) > 12 else { return nil }
         if abs(dragOffset.height) > abs(dragOffset.width) {
             return dragOffset.height < 0 ? .up : .down
@@ -121,6 +144,13 @@ struct CullDeckView: View {
         case .undo, .previousImage: return session.canUndo ? action : nil
         default: return action
         }
+    }
+
+    /// Trashing is the only destructive action, so it's the only one marked.
+    private var trashProgress: Double {
+        if committingAction == .trash { return 1 }
+        guard pendingAction == .trash else { return 0 }
+        return dragProgress
     }
 
     private var dragProgress: Double {
@@ -161,6 +191,7 @@ struct CullDeckView: View {
             perform(action)
             return
         }
+        committingAction = action
         // Slide the neighbouring page exactly into the centre, then swap the
         // queue underneath it so the handoff is invisible.
         withAnimation(.snappy(duration: 0.28)) {
@@ -168,6 +199,7 @@ struct CullDeckView: View {
         } completion: {
             perform(action)
             dragOffset = .zero
+            committingAction = nil
         }
     }
 

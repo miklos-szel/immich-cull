@@ -71,13 +71,20 @@ final class CleanupFlowTests: XCTestCase {
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH '2 of'")).firstMatch
             .waitForExistence(timeout: 5), "Should advance after trashing")
 
-        forceTap(app.buttons["trashBinButton"])
+        let trashButton = app.buttons["trashBinButton"]
+        waitForLabel(trashButton, matching: "label == 'Trash bin, 1 item'")
+
+        forceTap(trashButton)
         let restore = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Restore'")).firstMatch
         XCTAssertTrue(restore.waitForExistence(timeout: 10), "Trash bin should show the trashed asset")
         forceTap(app.buttons["Select All"])
         forceTap(restore)
         XCTAssertTrue(app.staticTexts["Trash is empty"].waitForExistence(timeout: 10),
                       "Bin should be empty after restoring")
+
+        // Restoring must also clear the badge and the session's trash tally.
+        forceTap(app.buttons["Done"])
+        waitForLabel(trashButton, matching: "label == 'Trash bin'")
     }
 
     @MainActor
@@ -93,7 +100,7 @@ final class CleanupFlowTests: XCTestCase {
 
         // The badge counts the one asset now sitting in the Immich trash.
         let badgedTrashButton = app.buttons["trashBinButton"]
-        XCTAssertTrue(badgedTrashButton.label.contains("1"), "Trash badge should show 1, got: \(badgedTrashButton.label)")
+        waitForLabel(badgedTrashButton, matching: "label == 'Trash bin, 1 item'")
 
         forceTap(badgedTrashButton)
         XCTAssertTrue(app.buttons["Select All"].waitForExistence(timeout: 10), "Trash bin should load")
@@ -107,9 +114,7 @@ final class CleanupFlowTests: XCTestCase {
 
         // Emptying the bin must clear the badge back to zero.
         forceTap(app.buttons["Done"])
-        let cleared = NSPredicate(format: "label == 'Trash bin'")
-        expectation(for: cleared, evaluatedWith: badgedTrashButton)
-        waitForExpectations(timeout: 10)
+        waitForLabel(badgedTrashButton, matching: "label == 'Trash bin'")
     }
 
     @MainActor

@@ -31,6 +31,10 @@ final class CullSession {
     private(set) var skippedCount = 0
     private(set) var savedToAlbumCount = 0
     private(set) var favoritedCount = 0
+    /// Bumped whenever a server mutation *finishes*. Views mirroring server
+    /// state (the trash badge) key off this instead of the local counters,
+    /// which change the instant you swipe — long before the request lands.
+    private(set) var serverRevision = 0
     var errorMessage: String?
 
     private let alsoDeleteFromPhotos: Bool
@@ -188,6 +192,7 @@ final class CullSession {
         } catch {
             errorMessage = error.localizedDescription
         }
+        serverRevision += 1
     }
 
     private func revert(_ record: CullActionRecord) async {
@@ -207,17 +212,23 @@ final class CullSession {
         } catch {
             errorMessage = error.localizedDescription
         }
+        serverRevision += 1
     }
 
     /// Forgets assets that were permanently deleted from the Immich trash:
     /// they can no longer be restored, so drop them from the undo stack and
     /// from this session's trashed tally.
-    func forgetTrashedAssets(ids: Set<String>) {
+    /// Returns how many of `ids` this session had trashed, so callers can tell
+    /// them apart from items that were already in the bin beforehand.
+    @discardableResult
+    func forgetTrashedAssets(ids: Set<String>) -> Int {
         let removedCount = trashedAssets.count { ids.contains($0.id) }
-        guard removedCount > 0 else { return }
+        guard removedCount > 0 else { return 0 }
         trashedAssets.removeAll { ids.contains($0.id) }
         trashedCount = max(0, trashedCount - removedCount)
         undoStack.removeAll { $0.kind == .trash && ids.contains($0.asset.id) }
+        serverRevision += 1
+        return removedCount
     }
 
     // MARK: Local photo cleanup

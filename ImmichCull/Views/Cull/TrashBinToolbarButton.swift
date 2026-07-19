@@ -25,7 +25,15 @@ struct TrashBinToolbarButton: View {
             }
             .fixedSize()
         }
-        .accessibilityLabel(count > 0 ? "Trash bin, \(count) items" : "Trash bin")
+        .accessibilityLabel(accessibilityText)
         .accessibilityIdentifier("trashBinButton")
+    }
+
+    private var accessibilityText: String {
+        switch count {
+        case 0: String(localized: "Trash bin")
+        case 1: String(localized: "Trash bin, 1 item")
+        default: String(localized: "Trash bin, \(count) items")
+        }
     }
 }

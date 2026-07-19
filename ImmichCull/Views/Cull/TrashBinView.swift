@@ -3,9 +3,9 @@ import SwiftUI
 /// Browses the Immich trash and restores selected assets.
 struct TrashBinView: View {
     let client: ImmichClient
-    /// Reports permanently deleted asset IDs so the caller can drop them from
-    /// any state that assumed they were still restorable.
-    var onPermanentDelete: (Set<String>) -> Void = { _ in }
+    /// Reports assets that left the trash — restored or permanently deleted —
+    /// so the caller can drop them from state that assumed they were binned.
+    var onAssetsLeftTrash: (Set<String>) -> Void = { _ in }
 
     @Environment(SettingsStore.self) private var settings
     @Environment(\.dismiss) private var dismiss
@@ -156,6 +156,7 @@ struct TrashBinView: View {
                 try await client.restoreAssets(ids: Array(ids))
                 assets.removeAll { ids.contains($0.id) }
                 selectedIDs = []
+                onAssetsLeftTrash(ids)
             } catch {
                 actionError = error.localizedDescription
                 isShowingActionError = true
@@ -175,7 +176,7 @@ struct TrashBinView: View {
                 try await client.permanentlyDeleteAssets(ids: Array(ids))
                 assets.removeAll { ids.contains($0.id) }
                 selectedIDs = []
-                onPermanentDelete(ids)
+                onAssetsLeftTrash(ids)
                 // Permanent delete always removes the local copies too.
                 if await PhotoLibraryService.ensureAccess() {
                     let localIDs = await PhotoLibraryService.localIdentifiers(matching: toDelete)

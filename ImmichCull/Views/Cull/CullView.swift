@@ -10,7 +10,10 @@ struct CullView: View {
 
     @State private var session: CullSession?
     @State private var isShowingTrashBin = false
-    @State private var trashCount = 0
+    /// Items that were already in the Immich bin before this session; the
+    /// badge adds this session's own trashed count on top, so it updates
+    /// instantly instead of waiting on a server statistics round-trip.
+    @State private var trashBaseline = 0
 
     var body: some View {
         NavigationStack {
@@ -33,19 +36,27 @@ struct CullView: View {
                     }
                 }
         }
-        .sheet(isPresented: $isShowingTrashBin, onDismiss: refreshTrashCount) {
+        .sheet(isPresented: $isShowingTrashBin) {
             if let client = settings.client {
-                TrashBinView(client: client) { deletedIDs in
-                    session?.forgetTrashedAssets(ids: deletedIDs)
+                TrashBinView(client: client) { ids in
+                    // Items this session trashed drop out of session.trashedCount;
+                    // the rest came from the pre-existing bin contents.
+                    let ownedBySession = session?.forgetTrashedAssets(ids: ids) ?? 0
+                    trashBaseline = max(0, trashBaseline - (ids.count - ownedBySession))
                 }
             }
         }
         .task { await startSession() }
-        // Refresh the badge initially and whenever something is trashed/restored.
-        .task(id: sessionTrashedCount) { await loadTrashCount() }
+        // Read the pre-existing bin size once. Immich's statistics endpoint
+        // lags behind writes, so re-reading it mid-session would overwrite the
+        // (correct) local count with a stale one — the badge is maintained
+        // locally from here on.
+        .task { await loadTrashBaseline() }
     }
 
-    private var sessionTrashedCount: Int { session?.trashedCount ?? 0 }
+    private var trashCount: Int {
+        max(0, trashBaseline + (session?.trashedCount ?? 0))
+    }
 
     @ViewBuilder private var content: some View {
         if let session, let client = settings.client {
@@ -86,14 +97,11 @@ struct CullView: View {
         isShowingTrashBin = true
     }
 
-    private func refreshTrashCount() {
-        Task { await loadTrashCount() }
-    }
-
-    private func loadTrashCount() async {
+    private func loadTrashBaseline() async {
         guard let client = settings.client else { return }
         if let stats = try? await client.trashStatistics() {
-            trashCount = stats.total
+            // The server total already includes this session's trashing.
+            trashBaseline = max(0, stats.total - (session?.trashedCount ?? 0))
         }
     }
 
