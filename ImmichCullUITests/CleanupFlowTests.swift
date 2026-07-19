@@ -202,6 +202,35 @@ final class CleanupFlowTests: XCTestCase {
         waitForLabel(app.buttons["trashBinButton"], matching: "label == 'Trash bin, 2 items'")
     }
 
+    /// Press and hold a thumbnail, then slide across the row: every cell the
+    /// finger passes selects, and the press alone is enough to enter selection
+    /// mode — no trip to the "Select" button first.
+    @MainActor
+    func testGridDragSelectsAcrossCells() throws {
+        let app = launchConnectedApp()
+        forceTap(app.buttons["Cull Entire Roll"])
+
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH '1 of'")).firstMatch
+            .waitForExistence(timeout: 15), "First card should load")
+        forceTap(app.buttons["albumTitleButton"])
+
+        let cells = app.scrollViews.buttons
+        XCTAssertTrue(cells.element(boundBy: 2).waitForExistence(timeout: 10), "Grid should list the queue")
+
+        // The grid is three columns wide, so 0…2 is one row. Slow velocity with
+        // a hold at each end gives the gesture enough touch events to paint.
+        cells.element(boundBy: 0).press(
+            forDuration: 0.6,
+            thenDragTo: cells.element(boundBy: 2),
+            withVelocity: .slow,
+            thenHoldForDuration: 0.3
+        )
+
+        let trash = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Move 3'")).firstMatch
+        XCTAssertTrue(trash.waitForExistence(timeout: 5),
+                      "Dragging across three cells should select all three")
+    }
+
     @MainActor
     func testReceiptsFinder() throws {
         try XCTSkipIf(true, "Receipts finder temporarily hidden from Home; code path retained.")

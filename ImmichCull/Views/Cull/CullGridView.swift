@@ -67,10 +67,15 @@ struct CullGridView: View {
                         client: client,
                         toggle: { handleTap(asset) }
                     )
+                    .dragSelectCell(id: asset.id)
                 }
             }
             .padding(.horizontal, 4)
         }
+        .dragSelection(
+            isSelected: { selectedIDs.contains($0) },
+            onPaint: setSelected
+        )
     }
 
     private var trashButton: some View {
@@ -108,6 +113,17 @@ struct CullGridView: View {
         } else {
             session.jump(to: asset)
             dismiss()
+        }
+    }
+
+    /// Painting is also the way into selection mode — unlike the toolbar button,
+    /// entering this way must keep what the drag has already selected.
+    private func setSelected(_ id: String, _ isSelected: Bool) {
+        isSelecting = true
+        if isSelected {
+            selectedIDs.insert(id)
+        } else {
+            selectedIDs.remove(id)
         }
     }
 

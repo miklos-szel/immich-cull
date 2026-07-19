@@ -72,10 +72,17 @@ struct BlurScanView: View {
                         client: client,
                         toggle: { toggle(result) }
                     )
+                    // Keyed on the result, not the asset: a photo can appear
+                    // once per scan result and the selection follows that ID.
+                    .dragSelectCell(id: result.id)
                 }
             }
             .padding(.horizontal, 4)
         }
+        .dragSelection(
+            isSelected: { selectedIDs.contains($0) },
+            onPaint: setSelected
+        )
     }
 
     private var trashButton: some View {
@@ -102,6 +109,14 @@ struct BlurScanView: View {
             selectedIDs.remove(result.id)
         } else {
             selectedIDs.insert(result.id)
+        }
+    }
+
+    private func setSelected(_ id: String, _ isSelected: Bool) {
+        if isSelected {
+            selectedIDs.insert(id)
+        } else {
+            selectedIDs.remove(id)
         }
     }
 
