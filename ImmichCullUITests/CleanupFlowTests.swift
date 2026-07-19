@@ -1,0 +1,125 @@
+import XCTest
+
+/// Drives the four cleanup finders against the mock server on 127.0.0.1:2283.
+final class CleanupFlowTests: XCTestCase {
+    @MainActor
+    private func launchConnectedApp() -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchArguments = ["--uitest-reset"]
+        app.launchEnvironment = [
+            "UITEST_SERVER_URL": "http://127.0.0.1:2283",
+            "UITEST_API_KEY": "test-key",
+            "UITEST_DISABLE_PHOTO_DELETE": "1",
+        ]
+        app.launch()
+        return app
+    }
+
+    @MainActor
+    private func trashButton(in app: XCUIApplication) -> XCUIElement {
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Move'")).firstMatch
+    }
+
+    @MainActor
+    func testBlurryScanFindsCandidates() throws {
+        try XCTSkipIf(true, "Blurry finder temporarily hidden from Home; code path retained.")
+        let app = launchConnectedApp()
+        forceTap(app.buttons["Find Blurry Photos"])
+        // Solid-color mock thumbnails all score 0, so everything is preselected.
+        let button = trashButton(in: app)
+        XCTAssertTrue(button.waitForExistence(timeout: 60), "Scan should finish and show the trash button")
+        XCTAssertTrue(button.label.contains("Move"), "Trash button should reflect selection")
+    }
+
+    @MainActor
+    func testDuplicatesFlow() throws {
+        try XCTSkipIf(true, "Duplicates finder temporarily hidden from Home; code path retained.")
+        let app = launchConnectedApp()
+        forceTap(app.buttons["Find Duplicates"])
+
+        let button = trashButton(in: app)
+        XCTAssertTrue(button.waitForExistence(timeout: 15), "Duplicate group should load")
+        XCTAssertEqual(button.label, "Move 1 to Trash", "Non-suggested copy should be preselected")
+        forceTap(button)
+        let confirm = app.buttons["Move to Trash"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5), "Confirmation dialog should appear")
+        forceTap(confirm)
+
+        let empty = app.staticTexts["No duplicates"]
+        XCTAssertTrue(empty.waitForExistence(timeout: 10), "Group should disappear after trashing its extra copy")
+    }
+
+    @MainActor
+    func testScreenshotsFinder() throws {
+        try XCTSkipIf(true, "Screenshots finder temporarily hidden from Home; code path retained.")
+        let app = launchConnectedApp()
+        forceTap(app.buttons["Find Screenshots"])
+
+        let button = trashButton(in: app)
+        XCTAssertTrue(button.waitForExistence(timeout: 15), "Screenshot results should load")
+        XCTAssertEqual(button.label, "Move 1 to Trash", "The single PNG screenshot should be found and preselected")
+    }
+
+    @MainActor
+    func testTrashBinRestore() throws {
+        let app = launchConnectedApp()
+        forceTap(app.buttons["Cull Entire Roll"])
+
+        let progress = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH '1 of'")).firstMatch
+        XCTAssertTrue(progress.waitForExistence(timeout: 15), "First card should load")
+        app.swipeUp() // trash the current asset
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH '2 of'")).firstMatch
+            .waitForExistence(timeout: 5), "Should advance after trashing")
+
+        forceTap(app.buttons["trashBinButton"])
+        let restore = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Restore'")).firstMatch
+        XCTAssertTrue(restore.waitForExistence(timeout: 10), "Trash bin should show the trashed asset")
+        forceTap(app.buttons["Select All"])
+        forceTap(restore)
+        XCTAssertTrue(app.staticTexts["Trash is empty"].waitForExistence(timeout: 10),
+                      "Bin should be empty after restoring")
+    }
+
+    @MainActor
+    func testTrashBinPermanentDelete() throws {
+        let app = launchConnectedApp()
+        forceTap(app.buttons["Cull Entire Roll"])
+
+        let progress = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH '1 of'")).firstMatch
+        XCTAssertTrue(progress.waitForExistence(timeout: 15), "First card should load")
+        app.swipeUp() // trash the current asset
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH '2 of'")).firstMatch
+            .waitForExistence(timeout: 5), "Should advance after trashing")
+
+        // The badge counts the one asset now sitting in the Immich trash.
+        let badgedTrashButton = app.buttons["trashBinButton"]
+        XCTAssertTrue(badgedTrashButton.label.contains("1"), "Trash badge should show 1, got: \(badgedTrashButton.label)")
+
+        forceTap(badgedTrashButton)
+        XCTAssertTrue(app.buttons["Select All"].waitForExistence(timeout: 10), "Trash bin should load")
+        forceTap(app.buttons["Select All"])
+        forceTap(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Delete'")).firstMatch)
+        let confirm = app.buttons["Delete Permanently"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5), "Confirmation dialog should appear")
+        forceTap(confirm)
+        XCTAssertTrue(app.staticTexts["Trash is empty"].waitForExistence(timeout: 10),
+                      "Bin should be empty after permanent delete")
+
+        // Emptying the bin must clear the badge back to zero.
+        forceTap(app.buttons["Done"])
+        let cleared = NSPredicate(format: "label == 'Trash bin'")
+        expectation(for: cleared, evaluatedWith: badgedTrashButton)
+        waitForExpectations(timeout: 10)
+    }
+
+    @MainActor
+    func testReceiptsFinder() throws {
+        try XCTSkipIf(true, "Receipts finder temporarily hidden from Home; code path retained.")
+        let app = launchConnectedApp()
+        forceTap(app.buttons["Find Receipts & Bills"])
+
+        let button = trashButton(in: app)
+        XCTAssertTrue(button.waitForExistence(timeout: 15), "Smart search results should load")
+        XCTAssertEqual(button.label, "Move 0 to Trash", "Receipt candidates should not be preselected")
+    }
+}
