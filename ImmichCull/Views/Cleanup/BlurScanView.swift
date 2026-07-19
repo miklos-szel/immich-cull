@@ -80,6 +80,7 @@ struct BlurScanView: View {
             .padding(.horizontal, 4)
         }
         .dragSelection(
+            ids: session.results.map(\.id),
             isSelected: { selectedIDs.contains($0) },
             onPaint: setSelected
         )

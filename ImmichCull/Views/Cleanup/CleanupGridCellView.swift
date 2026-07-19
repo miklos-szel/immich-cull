@@ -7,7 +7,10 @@ struct CleanupGridCellView: View {
     let caption: String?
     var selectionTint: Color = .red
     let client: ImmichClient
-    let toggle: () -> Void
+    /// Left empty by grids that use `dragSelection`: that modifier claims the
+    /// touch for its paint gesture and handles the tap itself, so wiring the
+    /// button up too would toggle twice for one tap and cancel itself out.
+    var toggle: () -> Void = {}
 
     var body: some View {
         Button(action: toggle) {

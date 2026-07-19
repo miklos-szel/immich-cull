@@ -73,6 +73,7 @@ struct CullGridView: View {
             .padding(.horizontal, 4)
         }
         .dragSelection(
+            ids: session.queue.map(\.id),
             isSelected: { selectedIDs.contains($0) },
             onPaint: setSelected
         )
