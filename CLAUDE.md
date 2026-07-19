@@ -68,6 +68,10 @@ The app exposes launch hooks for tests (see `SettingsStore.init`): `--uitest-res
 - Tap list-row `Button`s by their combined label, not the inner `StaticText` (which isn't hit-testable).
 - Approve the Local Network prompt through the `com.apple.springboard` app, not the app under test.
 
+## License
+
+GPLv3 (see `LICENSE`). Keep any new dependency GPL-compatible.
+
 ## Conventions
 
 - Follow `swiftui-pro` guidance: `foregroundStyle` over `foregroundColor`, `Label` for icon+text, `ContentUnavailableView` for empty states, `.task` over `.onAppear` for async work, `@MainActor` on all `@Observable` classes, one type per file.

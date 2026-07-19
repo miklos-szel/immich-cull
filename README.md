@@ -63,4 +63,8 @@ immich-cull talks only to the Immich server you point it at. There is no analyti
 
 ## License
 
-Not yet specified.
+Copyright (C) 2026 Miklos Szel
+
+immich-cull is free software: you can redistribute it and/or modify it under the terms of the **GNU General Public License, version 3** as published by the Free Software Foundation.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the [GNU General Public License](LICENSE) for more details.
