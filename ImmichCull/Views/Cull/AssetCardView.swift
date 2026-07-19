@@ -15,7 +15,9 @@ struct AssetCardView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(.black)
+        // Letterboxing follows the theme — white in light mode, dark in dark —
+        // so the card blends into the screen instead of sitting in a black box.
+        .background(.background)
         .clipShape(.rect(cornerRadius: 16))
         .accessibilityLabel(asset.originalFileName)
     }

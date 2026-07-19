@@ -6,7 +6,7 @@ A native iOS app for quickly culling photos and videos on a self-hosted [Immich]
 
 ## Features
 
-- **Swipe to cull.** A horizontal pager (like the Photos app) shows one asset at a time. Each direction is mapped to an action, and every mapping is configurable in Settings:
+- **Swipe to cull.** An interactive horizontal pager (like the Photos app): the neighbouring images track your finger and slide into place, with a red marker only when a swipe would bin the photo. Each direction is mapped to an action, and every mapping is configurable in Settings:
 
   | Direction | Default action |
   |---|---|
@@ -21,10 +21,10 @@ A native iOS app for quickly culling photos and videos on a self-hosted [Immich]
 - **Pick your scope.** Cull the entire roll (default) or select one or more albums. Pull to refresh the album list.
 - **Videos included.** Video assets play muted inline while you review them.
 - **Undo anything.** Every action is reversible — undo restores from the trash, removes from the album, or clears the tag, on the server.
-- **Trash bin.** A red badge on the cull screen counts what's in the Immich trash. Open it to review, restore, or permanently delete — emptying it clears the badge and drops those items from the undo history, since they can no longer be restored.
+- **Trash bin.** A red badge on the cull screen counts what's in the Immich trash and updates the moment you swipe. Open it to review, restore, or permanently delete — emptying it clears the badge and drops those items from the undo history, since they can no longer be restored.
 - **Local cleanup.** Optionally remove the matching photo/video from the iPhone's own library when you trash it (matched by filename and capture date, deleted in one batch at the end of a session). Permanent deletes from the trash bin always remove local copies too.
 - **Stats.** Lifetime counters for deleted / reviewed / filed / favourited, plus the current server trash size, all in Settings.
-- **Appearance.** System (default), Light, or Dark.
+- **Appearance.** System (default), Light, or Dark — photos sit on a matching background rather than in a black box.
 
 ## Requirements
 
