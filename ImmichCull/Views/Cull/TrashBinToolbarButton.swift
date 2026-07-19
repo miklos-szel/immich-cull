@@ -12,10 +12,13 @@ struct TrashBinToolbarButton: View {
         Button(action: action) {
             // The badge sits inside the button's own bounds — insetting the
             // glyph instead of offsetting the badge keeps it from being clipped.
+            // The inset is symmetric so the glyph stays optically centred next
+            // to its neighbours whether or not a badge is showing; the badge
+            // overlaps the padding rather than pushing the icon down and left.
             ZStack(alignment: .topTrailing) {
                 Image(systemName: "trash")
-                    .padding(.top, 7)
-                    .padding(.trailing, 9)
+                    .padding(.vertical, 6)
+                    .padding(.horizontal, 8)
                 if count > 0 {
                     Text(count, format: .number)
                         .font(.system(size: 11, weight: .bold))
