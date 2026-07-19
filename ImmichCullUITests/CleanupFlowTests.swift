@@ -179,7 +179,7 @@ final class CleanupFlowTests: XCTestCase {
 
         // Jump: pick the third thumbnail and continue from it.
         forceTap(app.buttons["albumTitleButton"])
-        let cells = app.scrollViews.buttons
+        let cells = app.buttons.matching(identifier: "gridCell")
         XCTAssertTrue(cells.element(boundBy: 2).waitForExistence(timeout: 10), "Grid should list the queue")
         forceTap(cells.element(boundBy: 2))
         XCTAssertTrue(firstCard.waitForExistence(timeout: 10),
@@ -214,7 +214,7 @@ final class CleanupFlowTests: XCTestCase {
             .waitForExistence(timeout: 15), "First card should load")
         forceTap(app.buttons["albumTitleButton"])
 
-        let cells = app.scrollViews.buttons
+        let cells = app.buttons.matching(identifier: "gridCell")
         XCTAssertTrue(cells.element(boundBy: 2).waitForExistence(timeout: 10), "Grid should list the queue")
 
         // The grid is three columns wide, so 0…2 is one row. Slow velocity with
@@ -237,17 +237,13 @@ final class CleanupFlowTests: XCTestCase {
     /// Dragging onto another row fills the range, Photos-style: from cell 0 to
     /// cell 3 takes the rest of row one with it, for four in total.
     ///
-    /// Skipped: under XCUITest's synthetic press-drag-hold this selects cells
-    /// 1-3 rather than 0-3 — a correctly-shaped range that starts one cell
-    /// late, so the anchor resolves to the wrong cell. The horizontal case
-    /// (`testGridDragSelectsAcrossCells`) presses the *same* cell and anchors
-    /// correctly, which is why this is unexplained and suspected to be an
-    /// artifact of the synthesized gesture. Pinning itself works — before
-    /// `ScrollPanDisabler` this selected exactly one cell, not a range.
-    /// Un-skip once verified against a real finger.
+    /// Dragging onto another row fills the range, Photos-style: from cell 0 to
+    /// cell 3 takes the rest of row one with it, for four in total.
+    ///
+    /// The grid is a fixed page, so nothing can move under the finger while
+    /// this runs — that's the property being guarded.
     @MainActor
     func testDragOntoAnotherRowSelectsTheWholeRange() throws {
-        try XCTSkipIf(true, "Anchors one cell late under synthetic drags; verify on device.")
         let app = launchConnectedApp()
         forceTap(app.buttons["Cull Entire Roll"])
 
@@ -255,7 +251,7 @@ final class CleanupFlowTests: XCTestCase {
             .waitForExistence(timeout: 15), "First card should load")
         forceTap(app.buttons["albumTitleButton"])
 
-        let cells = app.scrollViews.buttons
+        let cells = app.buttons.matching(identifier: "gridCell")
         XCTAssertTrue(cells.element(boundBy: 3).waitForExistence(timeout: 10), "Grid should list the queue")
 
         // Three columns, so 0 and 3 are the same column on consecutive rows;

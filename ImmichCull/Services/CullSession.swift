@@ -52,8 +52,15 @@ final class CullSession {
     var current: ImmichAsset? { queue.first }
     var upNext: ImmichAsset? { queue.dropFirst().first }
     /// The image an undo / "previous" action would bring back, for paging preview.
+    /// What `undo` would bring back — including a deletion.
     var previousAsset: ImmichAsset? { undoStack.last?.asset }
     var canUndo: Bool { !undoStack.isEmpty }
+    /// What "previous image" would show: the last reviewed photo that wasn't
+    /// deleted, since going back steps over deletions instead of reviving them.
+    var priorReviewedAsset: ImmichAsset? {
+        undoStack.last(where: { $0.kind != .trash })?.asset
+    }
+    var canGoToPreviousImage: Bool { priorReviewedAsset != nil }
     var hasDestinationAlbum: Bool { !destinationAlbumID.isEmpty }
 
     private let stats: StatsStore?
@@ -120,7 +127,19 @@ final class CullSession {
     /// Steps back to the previously reviewed image. Going back also rolls back
     /// what was done to that image — leaving it trashed/tagged while showing it
     /// as the current card would put the queue and the server out of sync.
+    /// Steps back to the photo *before* whatever was just deleted, leaving the
+    /// deletion alone. Going back to look at what you did shouldn't quietly
+    /// un-delete something — that's `undo`'s job, and the trash bin can restore
+    /// it either way.
+    ///
+    /// Trashed entries are dropped from the undo stack rather than reverted,
+    /// for the same reason `forgetTrashedAssets` does it: re-showing an asset
+    /// that is still trashed on the server desyncs the queue from it.
     func goToPreviousImage() {
+        while let record = undoStack.last, record.kind == .trash {
+            undoStack.removeLast()
+        }
+        guard canGoToPreviousImage else { return }
         undo()
     }
 

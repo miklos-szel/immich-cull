@@ -103,7 +103,7 @@ struct CullDeckView: View {
     private var deckCards: [DeckCard] {
         var cards: [DeckCard] = []
         var seen: Set<String> = []
-        if let previous = session.previousAsset, seen.insert(previous.id).inserted {
+        if let previous = backwardAsset, seen.insert(previous.id).inserted {
             cards.append(DeckCard(asset: previous, slot: -1))
         }
         if let current = session.current, seen.insert(current.id).inserted {
@@ -125,8 +125,19 @@ struct CullDeckView: View {
     private var pagedOffset: Double {
         let x = dragOffset.width
         if x < 0 && session.upNext == nil { return x * Self.edgeResistance }
-        if x > 0 && session.previousAsset == nil { return x * Self.edgeResistance }
+        if x > 0 && backwardAsset == nil { return x * Self.edgeResistance }
         return x
+    }
+
+    /// The card that slides in from the left, which differs by what the
+    /// backward direction is mapped to: undo revives the last action including
+    /// a deletion, while "previous image" steps over deletions.
+    private var backwardAsset: ImmichAsset? {
+        switch settings.action(for: .right) {
+        case .undo: session.previousAsset
+        case .previousImage: session.priorReviewedAsset
+        default: nil
+        }
     }
 
     /// Vertical drags lift the current card only; horizontal drags page.
@@ -150,7 +161,10 @@ struct CullDeckView: View {
         let action = settings.action(for: activeDirection)
         switch action {
         case .disabled: return nil
-        case .undo, .previousImage: return session.canUndo ? action : nil
+        // Different availability: undo can revive a deletion, "previous image"
+        // steps over deletions and needs a non-deleted photo to land on.
+        case .undo: return session.canUndo ? action : nil
+        case .previousImage: return session.canGoToPreviousImage ? action : nil
         default: return action
         }
     }
@@ -190,7 +204,8 @@ struct CullDeckView: View {
         }
         // Undo / previous page backward; everything else advances forward.
         let backward = (action == .undo || action == .previousImage)
-        if backward && !session.canUndo {
+        let canGoBackward = action == .undo ? session.canUndo : session.canGoToPreviousImage
+        if backward && !canGoBackward {
             snapBack()
             return
         }
