@@ -4,6 +4,7 @@ import XCTest
 final class CleanupFlowTests: XCTestCase {
     @MainActor
     private func launchConnectedApp() -> XCUIApplication {
+        resetMockServer()
         let app = XCUIApplication()
         app.launchArguments = ["--uitest-reset"]
         app.launchEnvironment = [
@@ -115,6 +116,41 @@ final class CleanupFlowTests: XCTestCase {
         // Emptying the bin must clear the badge back to zero.
         forceTap(app.buttons["Done"])
         waitForLabel(badgedTrashButton, matching: "label == 'Trash bin'")
+    }
+
+    /// The album title opens a grid: tapping a photo continues from it, and
+    /// selection mode trashes several at once.
+    @MainActor
+    func testGridJumpAndBulkTrash() throws {
+        let app = launchConnectedApp()
+        forceTap(app.buttons["Cull Entire Roll"])
+
+        let firstCard = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH '1 of'")).firstMatch
+        XCTAssertTrue(firstCard.waitForExistence(timeout: 15), "First card should load")
+
+        // Jump: pick the third thumbnail and continue from it.
+        forceTap(app.buttons["albumTitleButton"])
+        let cells = app.scrollViews.buttons
+        XCTAssertTrue(cells.element(boundBy: 2).waitForExistence(timeout: 10), "Grid should list the queue")
+        forceTap(cells.element(boundBy: 2))
+        XCTAssertTrue(firstCard.waitForExistence(timeout: 10),
+                      "Jumping keeps the progress at the first unreviewed card")
+
+        // Bulk trash: select two photos from the grid and bin them.
+        forceTap(app.buttons["albumTitleButton"])
+        forceTap(app.buttons["Select"])
+        forceTap(cells.element(boundBy: 0))
+        forceTap(cells.element(boundBy: 1))
+        let trash = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Move 2'")).firstMatch
+        XCTAssertTrue(trash.waitForExistence(timeout: 5), "Two photos should be selected")
+        forceTap(trash)
+        let confirm = app.buttons["Move to Trash"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5), "Confirmation should appear")
+        forceTap(confirm)
+
+        forceTap(app.buttons["Done"])
+        // Both are now in the Immich bin.
+        waitForLabel(app.buttons["trashBinButton"], matching: "label == 'Trash bin, 2 items'")
     }
 
     @MainActor

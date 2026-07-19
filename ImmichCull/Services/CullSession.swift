@@ -122,6 +122,56 @@ final class CullSession {
         undo()
     }
 
+    /// Continues the run from `asset`: it becomes the current card and the
+    /// images that preceded it move to the end, so nothing is skipped for good.
+    func jump(to asset: ImmichAsset) {
+        guard let index = queue.firstIndex(where: { $0.id == asset.id }), index > 0 else { return }
+        queue = Array(queue[index...]) + Array(queue[..<index])
+        prefetchUpcoming()
+    }
+
+    /// Silently drops an asset the server no longer has (no preview, no
+    /// original). It was never reviewed, so nothing is counted or sent.
+    func dropUnavailable(_ asset: ImmichAsset) {
+        guard queue.contains(where: { $0.id == asset.id }) else { return }
+        queue.removeAll { $0.id == asset.id }
+        totalCount = max(reviewedCount, totalCount - 1)
+        if queue.isEmpty {
+            phase = .finished
+        }
+        prefetchUpcoming()
+    }
+
+    /// Trashes several assets at once (from the grid), each individually undoable.
+    func trashSelected(_ assets: [ImmichAsset]) {
+        guard !assets.isEmpty else { return }
+        let ids = assets.map(\.id)
+        let idSet = Set(ids)
+
+        queue.removeAll { idSet.contains($0.id) }
+        reviewedCount += assets.count
+        trashedCount += assets.count
+        trashedAssets.append(contentsOf: assets)
+        for asset in assets {
+            undoStack.append(CullActionRecord(asset: asset, kind: .trash))
+            stats?.record(.trash)
+        }
+        if queue.isEmpty {
+            phase = .finished
+        }
+        prefetchUpcoming()
+
+        enqueueBulk(ids) { [weak self] in
+            guard let self else { return }
+            do {
+                try await client.trashAssets(ids: ids)
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+            serverRevision += 1
+        }
+    }
+
     func undo() {
         guard let record = undoStack.popLast() else { return }
         reviewedCount -= 1
@@ -140,6 +190,19 @@ final class CullSession {
         phase = .active
         enqueue(record.asset.id) { [weak self] in
             await self?.revert(record)
+        }
+    }
+
+    /// Bulk variant of `enqueue`: waits for every asset's in-flight work, then
+    /// becomes the pending operation for all of them.
+    private func enqueueBulk(_ assetIDs: [String], _ work: @escaping @MainActor () async -> Void) {
+        let previous = assetIDs.compactMap { pendingOperations[$0] }
+        let task = Task { @MainActor in
+            for operation in previous { await operation.value }
+            await work()
+        }
+        for id in assetIDs {
+            pendingOperations[id] = task
         }
     }
 

@@ -5,13 +5,22 @@ struct AssetCardView: View {
     let asset: ImmichAsset
     let client: ImmichClient
     let isTopCard: Bool
+    /// Called when the server has neither a preview nor the original.
+    var onUnavailable: (() -> Void)?
 
     var body: some View {
         Group {
             if asset.type == .video && isTopCard {
                 VideoCardView(url: client.videoPlaybackURL(assetID: asset.id), apiKey: client.apiKey)
             } else {
-                RemoteImageView(url: client.thumbnailURL(assetID: asset.id), apiKey: client.apiKey)
+                RemoteImageView(
+                    url: client.thumbnailURL(assetID: asset.id),
+                    apiKey: client.apiKey,
+                    // Only stills can fall back to the original; a video's
+                    // original is a movie file, not something UIImage decodes.
+                    fallbackURL: asset.type == .image ? client.originalURL(assetID: asset.id) : nil,
+                    onUnavailable: onUnavailable
+                )
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

@@ -34,23 +34,30 @@ def png(color, width=400, height=500):
             + chunk(b"IEND", b""))
 
 # 8 assets total; first 5 belong to "Test Album".
-ASSETS = []
-for i in range(8):
-    ASSETS.append({
-        "id": make_id(f"asset-{i}"),
-        "type": "IMAGE",
-        "originalFileName": f"IMG_{1000 + i}.jpg",
-        "localDateTime": f"2026-06-{10 + i:02d}T12:00:00.000Z",
-        "isFavorite": False,
-        "originalMimeType": "image/jpeg",
-        "exifInfo": {"make": "Apple", "model": "iPhone 14 Pro"},
-        "trashed": False,
-        "color": COLORS[i % len(COLORS)],
-    })
-# Asset 6 is a screenshot: PNG, no camera EXIF, telltale filename.
-ASSETS[6]["originalFileName"] = "Screenshot_2026-07-01.png"
-ASSETS[6]["originalMimeType"] = "image/png"
-ASSETS[6]["exifInfo"] = {"make": None, "model": None}
+def build_assets():
+    assets = []
+    for i in range(8):
+        assets.append({
+            "id": make_id(f"asset-{i}"),
+            "type": "IMAGE",
+            "originalFileName": f"IMG_{1000 + i}.jpg",
+            "localDateTime": f"2026-06-{10 + i:02d}T12:00:00.000Z",
+            "isFavorite": False,
+            "originalMimeType": "image/jpeg",
+            "exifInfo": {"make": "Apple", "model": "iPhone 14 Pro"},
+            "trashed": False,
+            "color": COLORS[i % len(COLORS)],
+        })
+    # Asset 6 is a screenshot: PNG, no camera EXIF, telltale filename.
+    assets[6]["originalFileName"] = "Screenshot_2026-07-01.png"
+    assets[6]["originalMimeType"] = "image/png"
+    assets[6]["exifInfo"] = {"make": None, "model": None}
+    # Asset 3 has no generated preview (real servers do this); the app should
+    # fall back to the original rather than showing a broken card.
+    assets[3]["previewMissing"] = True
+    return assets
+
+ASSETS = build_assets()
 
 TEST_ALBUM_ID = make_id("album-test")
 KEEPERS_ALBUM_ID = make_id("album-keepers")
@@ -60,6 +67,18 @@ ALBUM_MEMBERS = {
 }
 TAGS = {}          # name -> tag id
 TAGGED = {}        # tag id -> set of asset ids
+
+
+def reset_state():
+    """Restores the fixture so each UI test starts from identical content."""
+    ASSETS[:] = build_assets()
+    ALBUM_MEMBERS.clear()
+    ALBUM_MEMBERS.update({
+        TEST_ALBUM_ID: [a["id"] for a in ASSETS[:5]],
+        KEEPERS_ALBUM_ID: [],
+    })
+    TAGS.clear()
+    TAGGED.clear()
 
 def log_event(event):
     with LOG_PATH.open("a") as fh:
@@ -121,6 +140,13 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/server/ping":
             return self.send_json({"res": "pong"})
+
+        # Test-only: restore the fixture so tests don't inherit each other's
+        # mutations (trashing in one test used to break later ones).
+        if method == "POST" and path == "/__test__/reset":
+            reset_state()
+            log_event({"action": "reset"})
+            return self.send_json({"ok": True})
         if not self.check_auth():
             return
 
@@ -198,7 +224,17 @@ class Handler(BaseHTTPRequestHandler):
             asset = next((a for a in ASSETS if a["id"] == parts[2]), None)
             if asset is None:
                 return self.send_json({"message": "Not found"}, status=404)
+            # Asset 3 mimics a preview Immich never generated: the thumbnail
+            # 404s but the original is still served (see below).
+            if asset.get("previewMissing"):
+                return self.send_json({"message": "Not found"}, status=404)
             return self.send_png(png(asset["color"]))
+
+        if method == "GET" and len(parts) == 4 and parts[1] == "assets" and parts[3] == "original":
+            asset = next((a for a in ASSETS if a["id"] == parts[2]), None)
+            if asset is None or asset.get("originalMissing"):
+                return self.send_json({"message": "Not found"}, status=404)
+            return self.send_png(png(asset["color"], width=600, height=800))
 
         if method == "DELETE" and path == "/api/assets":
             body = self.read_body()

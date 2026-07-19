@@ -152,6 +152,10 @@ struct ImmichClient: Sendable {
         apiURL("assets/\(assetID)/thumbnail").appending(queryItems: [URLQueryItem(name: "size", value: size)])
     }
 
+    func originalURL(assetID: String) -> URL {
+        apiURL("assets/\(assetID)/original")
+    }
+
     func videoPlaybackURL(assetID: String) -> URL {
         apiURL("assets/\(assetID)/video/playback")
     }

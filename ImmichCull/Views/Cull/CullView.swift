@@ -10,6 +10,7 @@ struct CullView: View {
 
     @State private var session: CullSession?
     @State private var isShowingTrashBin = false
+    @State private var isShowingGrid = false
     /// Items that were already in the Immich bin before this session; the
     /// badge adds this session's own trashed count on top, so it updates
     /// instantly instead of waiting on a server statistics round-trip.
@@ -23,6 +24,20 @@ struct CullView: View {
                 .toolbar {
                     ToolbarItem(placement: .topBarLeading) {
                         Button("Close", systemImage: "xmark", action: close)
+                    }
+                    ToolbarItem(placement: .principal) {
+                        Button(action: showGrid) {
+                            HStack(spacing: 4) {
+                                Text(selection.title)
+                                    .font(.headline)
+                                    .lineLimit(1)
+                                Image(systemName: "chevron.down")
+                                    .font(.caption2.bold())
+                            }
+                        }
+                        .foregroundStyle(.primary)
+                        .accessibilityLabel("\(selection.title), browse all photos")
+                        .accessibilityIdentifier("albumTitleButton")
                     }
                     ToolbarItem(placement: .topBarTrailing) {
                         TrashBinToolbarButton(count: trashCount, action: showTrashBin)
@@ -44,6 +59,11 @@ struct CullView: View {
                     let ownedBySession = session?.forgetTrashedAssets(ids: ids) ?? 0
                     trashBaseline = max(0, trashBaseline - (ids.count - ownedBySession))
                 }
+            }
+        }
+        .sheet(isPresented: $isShowingGrid) {
+            if let session, let client = settings.client {
+                CullGridView(session: session, client: client, title: selection.title)
             }
         }
         .task { await startSession() }
@@ -95,6 +115,10 @@ struct CullView: View {
 
     private func showTrashBin() {
         isShowingTrashBin = true
+    }
+
+    private func showGrid() {
+        isShowingGrid = true
     }
 
     private func loadTrashBaseline() async {

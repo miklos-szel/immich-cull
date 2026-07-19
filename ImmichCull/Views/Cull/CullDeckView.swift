@@ -42,9 +42,16 @@ struct CullDeckView: View {
                 // already-loaded image — when the queue advances underneath it.
                 // Rebuilding it here is what made the photo flicker.
                 ForEach(deckCards) { card in
-                    AssetCardView(asset: card.asset, client: client, isTopCard: card.slot == 0)
-                        .offset(x: offsetX(for: card.slot, page: page),
-                                y: card.slot == 0 ? verticalOffset : 0)
+                    AssetCardView(
+                        asset: card.asset,
+                        client: client,
+                        isTopCard: card.slot == 0,
+                        // Skip past assets the server can't serve at all rather
+                        // than parking a dead card in front of the user.
+                        onUnavailable: { session.dropUnavailable(card.asset) }
+                    )
+                    .offset(x: offsetX(for: card.slot, page: page),
+                            y: card.slot == 0 ? verticalOffset : 0)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
