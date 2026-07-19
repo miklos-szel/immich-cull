@@ -13,6 +13,9 @@ struct CullGridView: View {
     @State private var isSelecting = false
     @State private var selectedIDs: Set<String> = []
     @State private var isConfirmingTrash = false
+    @State private var pageIndex = 0
+
+    private static let hintHeight: CGFloat = 20
 
     var body: some View {
         NavigationStack {
@@ -47,36 +50,59 @@ struct CullGridView: View {
         }
     }
 
+    /// Paged, not scrolled. A static page gives a selection drag no scroll view
+    /// to wrestle for the touch, so nothing slides out from under the finger —
+    /// which is what made drag-select unreliable while this was a `ScrollView`.
     private var grid: some View {
-        ScrollView {
-            Text(isSelecting
-                 ? "Select photos to move to the trash."
-                 : "Tap a photo to continue culling from it.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 8)
-                .padding(.top, 4)
-
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: 3), spacing: 4) {
-                ForEach(session.queue) { asset in
-                    CleanupGridCellView(
-                        asset: asset,
-                        isSelected: selectedIDs.contains(asset.id),
-                        caption: nil,
-                        client: client,
-                        toggle: { handleTap(asset) }
-                    )
-                    .dragSelectCell(id: asset.id)
+        GeometryReader { geometry in
+            let pages = pages(fitting: geometry.size)
+            VStack(spacing: 4) {
+                hint(pageCount: pages.count)
+                    .frame(height: Self.hintHeight)
+                TabView(selection: $pageIndex) {
+                    ForEach(Array(pages.enumerated()), id: \.offset) { index, assets in
+                        CullGridPageView(
+                            assets: assets,
+                            selectedIDs: selectedIDs,
+                            columns: CullGridMetrics.columns,
+                            client: client,
+                            onTap: handleTap
+                        )
+                        .tag(index)
+                    }
                 }
+                .tabViewStyle(.page(indexDisplayMode: .never))
+                .dragSelection(
+                    ids: session.queue.map(\.id),
+                    isSelected: { selectedIDs.contains($0) },
+                    onPaint: setSelected
+                )
             }
-            .padding(.horizontal, 4)
         }
-        .dragSelection(
-            ids: session.queue.map(\.id),
-            isSelected: { selectedIDs.contains($0) },
-            onPaint: setSelected
-        )
+    }
+
+    private func hint(pageCount: Int) -> some View {
+        HStack {
+            Text(isSelecting
+                 ? "Press and drag to select. Swipe sideways for more."
+                 : "Tap a photo to continue culling from it.")
+            Spacer()
+            if pageCount > 1 {
+                Text("\(pageIndex + 1) / \(pageCount)").monospacedDigit()
+            }
+        }
+        .font(.footnote)
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 8)
+    }
+
+    private func pages(fitting size: CGSize) -> [[ImmichAsset]] {
+        let available = CGSize(width: size.width, height: size.height - Self.hintHeight)
+        let pageSize = CullGridMetrics.pageSize(fitting: available)
+        let queue = session.queue
+        return stride(from: 0, to: queue.count, by: pageSize).map {
+            Array(queue[$0..<min($0 + pageSize, queue.count)])
+        }
     }
 
     private var trashButton: some View {

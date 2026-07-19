@@ -13,9 +13,6 @@ enum DragSelection {
     /// Long enough not to fire while flicking through the grid, short enough
     /// that it doesn't feel like a stall.
     static let pressDuration = 0.3
-    /// How close to the container edge the finger must get to start scrolling.
-    static let autoScrollMargin: CGFloat = 80
-    static let autoScrollInterval = Duration.milliseconds(150)
 }
 
 /// Frames of the currently laid-out cells, keyed by selection ID. `LazyVGrid`
@@ -25,15 +22,6 @@ struct DragSelectionFrameKey: PreferenceKey {
 
     static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
         value.merge(nextValue()) { _, new in new }
-    }
-}
-
-/// The scrollable container's own bounds, for deciding when to auto-scroll.
-struct DragSelectionBoundsKey: PreferenceKey {
-    static var defaultValue: CGRect { .zero }
-
-    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
-        value = nextValue()
     }
 }
 
@@ -83,7 +71,6 @@ private struct DragSelectionModifier: ViewModifier {
     let onPaint: (String, Bool) -> Void
 
     @State private var frames: [String: CGRect] = [:]
-    @State private var bounds: CGRect = .zero
     /// Whether this drag is selecting or deselecting — decided by the cell the
     /// press landed on, then applied to the whole range behind it.
     @State private var paintMode: Bool?
@@ -92,46 +79,27 @@ private struct DragSelectionModifier: ViewModifier {
     /// What the range covered last time, so shrinking the drag can undo the
     /// part that's no longer covered.
     @State private var paintedRange: ClosedRange<Int>?
-    /// Latest touch position, replayed after each auto-scroll step: the finger
-    /// is stationary then, so only the moving content changes what's under it.
-    @State private var lastLocation: CGPoint?
     @State private var feedback = 0
     /// Set the moment the press is recognised, while the finger is still
     /// stationary, so the container stops panning before the drag begins.
     @State private var isPainting = false
-    /// -1 scrolls towards the start, +1 towards the end, 0 is idle.
-    @State private var autoScrollDirection = 0
 
     func body(content: Content) -> some View {
-        ScrollViewReader { proxy in
-            content
-                // No `scrollDisabled` here on purpose: UIKit ignores a scroll
-                // view being disabled mid-touch once its pan is already
-                // tracking, so the lock never worked. The gesture below keeps
-                // the touch away from the scroll view instead.
-                .coordinateSpace(name: DragSelection.coordinateSpace)
-                .background {
-                    GeometryReader { geometry in
-                        Color.clear.preference(
-                            key: DragSelectionBoundsKey.self,
-                            value: geometry.frame(in: .named(DragSelection.coordinateSpace))
-                        )
-                    }
-                }
-                // Pins the grid for the duration of a paint drag. This is what
-                // `.scrollDisabled` could not do — see ScrollPanDisabler.
-                .background { ScrollPanDisabler(isPaused: isPainting) }
-                .onPreferenceChange(DragSelectionBoundsKey.self) { bounds = $0 }
-                .onPreferenceChange(DragSelectionFrameKey.self) { frames = $0 }
-                // Stays `simultaneousGesture` so taps still reach the cells' own
-                // buttons; `highPriorityGesture` would pin the grid too, but it
-                // swallows every tap. The pan recognizer above does the pinning.
-                .simultaneousGesture(paintGesture, including: isEnabled ? .all : .subviews)
-                .sensoryFeedback(.selection, trigger: feedback)
-                .task(id: autoScrollDirection) {
-                    await autoScroll(using: proxy)
-                }
-        }
+        content
+            // No `scrollDisabled` here on purpose: UIKit ignores a scroll
+            // view being disabled mid-touch once its pan is already
+            // tracking, so the lock never worked. The gesture below keeps
+            // the touch away from the scroll view instead.
+            .coordinateSpace(name: DragSelection.coordinateSpace)
+            // Pins the grid for the duration of a paint drag. This is what
+            // `.scrollDisabled` could not do — see ScrollPanDisabler.
+            .background { ScrollPanDisabler(isPaused: isPainting) }
+            .onPreferenceChange(DragSelectionFrameKey.self) { frames = $0 }
+            // Stays `simultaneousGesture` so taps still reach the cells' own
+            // buttons; `highPriorityGesture` would pin the grid too, but it
+            // swallows every tap. The pan recognizer above does the pinning.
+            .simultaneousGesture(paintGesture, including: isEnabled ? .all : .subviews)
+            .sensoryFeedback(.selection, trigger: feedback)
     }
 
     private var paintGesture: some Gesture {
@@ -156,19 +124,15 @@ private struct DragSelectionModifier: ViewModifier {
                     extendSelection(to: drag.location)
                 }
                 isPainting = false
-                autoScrollDirection = 0
                 paintMode = nil
                 anchorIndex = nil
                 paintedRange = nil
-                lastLocation = nil
             }
     }
 
     // MARK: - Painting
 
     private func extendSelection(to location: CGPoint) {
-        lastLocation = location
-        updateAutoScroll(for: location)
         guard let index = index(at: location) else { return }
 
         guard let anchorIndex, let paintMode else {
@@ -224,39 +188,4 @@ private struct DragSelectionModifier: ViewModifier {
         return best?.index
     }
 
-    // MARK: - Auto-scroll
-
-    private func updateAutoScroll(for location: CGPoint) {
-        guard bounds.height > 0 else { return }
-        if location.y > bounds.maxY - DragSelection.autoScrollMargin {
-            autoScrollDirection = 1
-        } else if location.y < bounds.minY + DragSelection.autoScrollMargin {
-            autoScrollDirection = -1
-        } else {
-            autoScrollDirection = 0
-        }
-    }
-
-    private func autoScroll(using proxy: ScrollViewProxy) async {
-        guard autoScrollDirection != 0 else { return }
-        while !Task.isCancelled {
-            try? await Task.sleep(for: DragSelection.autoScrollInterval)
-            guard !Task.isCancelled, isPainting else { return }
-            // Step by a row's worth of cells past the leading edge of the range.
-            guard let edge = paintedRange.map({ autoScrollDirection > 0 ? $0.upperBound : $0.lowerBound }),
-                  !ids.isEmpty
-            else { return }
-            // Clamped, not bailed out: near the ends there's still a partial
-            // row to bring into view.
-            let target = min(max(edge + (autoScrollDirection * 3), 0), ids.count - 1)
-            guard target != edge else { return }
-            withAnimation(.linear(duration: 0.15)) {
-                proxy.scrollTo(ids[target], anchor: autoScrollDirection > 0 ? .bottom : .top)
-            }
-            // The finger hasn't moved, but the content under it has.
-            if let lastLocation {
-                extendSelection(to: lastLocation)
-            }
-        }
-    }
 }
