@@ -17,6 +17,7 @@ struct TrashBinView: View {
     @State private var isShowingActionError = false
     @State private var actionError: String?
     @State private var isConfirmingDelete = false
+    @State private var isConfirmingEmpty = false
 
     var body: some View {
         NavigationStack {
@@ -84,12 +85,45 @@ struct TrashBinView: View {
             .padding(.horizontal, 4)
         }
         .dragSelection(
+            ids: assets.map(\.id),
             isSelected: { selectedIDs.contains($0) },
             onPaint: setSelected
         )
     }
 
+    /// Sits under the selection actions rather than in the toolbar, so it can't
+    /// be mistaken for "Select All"; the confirmation dialog guards the mis-tap.
+    private var emptyTrashButton: some View {
+        Button(role: .destructive, action: confirmEmpty) {
+            Label("Empty Trash", systemImage: "trash.slash")
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.large)
+        .tint(.red)
+        .accessibilityIdentifier("emptyTrashButton")
+        .confirmationDialog(
+            emptyDialogTitle,
+            isPresented: $isConfirmingEmpty,
+            titleVisibility: .visible
+        ) {
+            Button("Delete All Permanently", role: .destructive, action: emptyTrash)
+        } message: {
+            Text("This cannot be undone.")
+        }
+    }
+
     private var actionBar: some View {
+        VStack(spacing: 8) {
+            selectionActions
+            // Outside the group above: emptying the bin doesn't need a selection.
+            emptyTrashButton
+        }
+        .padding()
+        .background(.bar)
+    }
+
+    private var selectionActions: some View {
         HStack(spacing: 12) {
             Button(action: restoreSelected) {
                 Label("Restore \(selectedIDs.count)", systemImage: "arrow.uturn.backward")
@@ -114,8 +148,10 @@ struct TrashBinView: View {
         }
         .controlSize(.large)
         .disabled(selectedIDs.isEmpty)
-        .padding()
-        .background(.bar)
+    }
+
+    private var emptyDialogTitle: String {
+        String(localized: "Permanently delete all \(assets.count) from Immich and this device?")
     }
 
     private var deleteDialogTitle: String {
@@ -181,14 +217,25 @@ struct TrashBinView: View {
         isConfirmingDelete = true
     }
 
+    private func confirmEmpty() {
+        isConfirmingEmpty = true
+    }
+
     private func deleteSelectedPermanently() {
-        let ids = selectedIDs
-        let toDelete = assets.filter { ids.contains($0.id) }
+        permanentlyDelete(assets.filter { selectedIDs.contains($0.id) })
+    }
+
+    private func emptyTrash() {
+        permanentlyDelete(assets)
+    }
+
+    private func permanentlyDelete(_ toDelete: [ImmichAsset]) {
+        let ids = Set(toDelete.map(\.id))
         Task {
             do {
                 try await client.permanentlyDeleteAssets(ids: Array(ids))
                 assets.removeAll { ids.contains($0.id) }
-                selectedIDs = []
+                selectedIDs.subtract(ids)
                 onAssetsLeftTrash(ids)
                 // Permanent delete always removes the local copies too.
                 if await PhotoLibraryService.ensureAccess() {
