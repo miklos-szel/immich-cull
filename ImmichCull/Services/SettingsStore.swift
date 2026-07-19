@@ -14,6 +14,8 @@ final class SettingsStore {
         static let appearance = "appearance"
         static let showCardInfo = "showCardInfo"
         static let alsoDeleteFromPhotos = "alsoDeleteFromPhotos"
+        static let includePhotos = "includePhotos"
+        static let includeVideos = "includeVideos"
         static let apiKey = "apiKey"
         static let swipeUp = "swipeUpAction"
         static let swipeDown = "swipeDownAction"
@@ -54,6 +56,19 @@ final class SettingsStore {
     var alsoDeleteFromPhotos: Bool {
         didSet { UserDefaults.standard.set(alsoDeleteFromPhotos, forKey: Keys.alsoDeleteFromPhotos) }
     }
+    /// Which asset kinds a culling run offers. Both default to on; turning both
+    /// off would leave nothing to cull, so `mediaFilter` falls back to all.
+    var includePhotos: Bool {
+        didSet { UserDefaults.standard.set(includePhotos, forKey: Keys.includePhotos) }
+    }
+    var includeVideos: Bool {
+        didSet { UserDefaults.standard.set(includeVideos, forKey: Keys.includeVideos) }
+    }
+
+    var mediaFilter: MediaTypeFilter {
+        .from(includePhotos: includePhotos, includeVideos: includeVideos)
+    }
+
     var swipeUpAction: SwipeAction {
         didSet { UserDefaults.standard.set(swipeUpAction.rawValue, forKey: Keys.swipeUp) }
     }
@@ -78,7 +93,11 @@ final class SettingsStore {
 
     init() {
         // Defaults for toggles that should start enabled.
-        UserDefaults.standard.register(defaults: [Keys.alsoDeleteFromPhotos: true])
+        UserDefaults.standard.register(defaults: [
+            Keys.alsoDeleteFromPhotos: true,
+            Keys.includePhotos: true,
+            Keys.includeVideos: true,
+        ])
 
         // UI tests pass this flag to start from a clean slate.
         if CommandLine.arguments.contains("--uitest-reset") {
@@ -100,6 +119,8 @@ final class SettingsStore {
         appearance = AppTheme(rawValue: defaults.string(forKey: Keys.appearance) ?? "") ?? .system
         showCardInfo = defaults.bool(forKey: Keys.showCardInfo) // Defaults to false (hidden).
         alsoDeleteFromPhotos = defaults.bool(forKey: Keys.alsoDeleteFromPhotos)
+        includePhotos = defaults.bool(forKey: Keys.includePhotos)
+        includeVideos = defaults.bool(forKey: Keys.includeVideos)
         swipeUpAction = SwipeAction(rawValue: defaults.string(forKey: Keys.swipeUp) ?? "") ?? .trash
         swipeDownAction = SwipeAction(rawValue: defaults.string(forKey: Keys.swipeDown) ?? "") ?? .saveToAlbum
         swipeLeftAction = SwipeAction(rawValue: defaults.string(forKey: Keys.swipeLeft) ?? "") ?? .nextImage

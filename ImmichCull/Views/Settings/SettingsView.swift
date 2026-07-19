@@ -49,6 +49,19 @@ struct SettingsView: View {
                 }
 
                 Section {
+                    Toggle("Photos", isOn: $settings.includePhotos)
+                    Toggle("Videos", isOn: $settings.includeVideos)
+                } header: {
+                    Text("What to include")
+                } footer: {
+                    if !settings.includePhotos && !settings.includeVideos {
+                        Text("With both off there'd be nothing to review, so everything is offered.")
+                    } else {
+                        Text("Applies to the next culling run.")
+                    }
+                }
+
+                Section {
                     Picker("Appearance", selection: $settings.appearance) {
                         ForEach(AppTheme.allCases) { theme in
                             Text(theme.label).tag(theme)
