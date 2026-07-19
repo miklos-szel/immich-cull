@@ -118,6 +118,22 @@ final class CleanupFlowTests: XCTestCase {
         waitForLabel(badgedTrashButton, matching: "label == 'Trash bin'")
     }
 
+    /// An asset that search still lists but the server has deleted (400 on
+    /// every route) must be skipped automatically instead of parking a dead
+    /// card in the deck. The fixture's no-preview asset must survive, though —
+    /// its preview is missing but the asset is fine.
+    @MainActor
+    func testDeletedAssetIsSkippedButNoPreviewAssetSurvives() throws {
+        let app = launchConnectedApp()
+        forceTap(app.buttons["Cull Entire Roll"])
+
+        // 8 assets in the fixture, one of them a ghost: the deck must settle
+        // on 7 once it has confirmed the ghost is gone.
+        let progress = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH '1 of'")).firstMatch
+        XCTAssertTrue(progress.waitForExistence(timeout: 15), "First card should load")
+        waitForLabel(progress, matching: "label == '1 of 7'")
+    }
+
     /// Album counts must reflect what culling did, without a manual refresh.
     @MainActor
     func testAlbumCountRefreshesAfterCulling() throws {

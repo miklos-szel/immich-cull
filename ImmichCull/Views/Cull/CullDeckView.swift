@@ -46,9 +46,11 @@ struct CullDeckView: View {
                         asset: card.asset,
                         client: client,
                         isTopCard: card.slot == 0,
-                        // Skip past assets the server can't serve at all rather
+                        // Skip past assets the server no longer has, rather
                         // than parking a dead card in front of the user.
-                        onUnavailable: { session.dropUnavailable(card.asset) }
+                        onUnavailable: {
+                            Task { await session.verifyAndDropIfMissing(card.asset) }
+                        }
                     )
                     .offset(x: offsetX(for: card.slot, page: page),
                             y: card.slot == 0 ? verticalOffset : 0)

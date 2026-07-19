@@ -130,8 +130,17 @@ final class CullSession {
         prefetchUpcoming()
     }
 
-    /// Silently drops an asset the server no longer has (no preview, no
-    /// original). It was never reviewed, so nothing is counted or sent.
+    /// Called when a card's image can't be loaded. Confirms with the server
+    /// before discarding anything: assets whose preview simply hasn't been
+    /// generated must stay reviewable, only genuinely deleted ones are dropped.
+    func verifyAndDropIfMissing(_ asset: ImmichAsset) async {
+        guard queue.contains(where: { $0.id == asset.id }) else { return }
+        guard await client.assetExists(id: asset.id) == false else { return }
+        dropUnavailable(asset)
+    }
+
+    /// Silently drops an asset the server no longer has. It was never
+    /// reviewed, so nothing is counted or sent.
     func dropUnavailable(_ asset: ImmichAsset) {
         guard queue.contains(where: { $0.id == asset.id }) else { return }
         queue.removeAll { $0.id == asset.id }

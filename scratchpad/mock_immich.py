@@ -55,6 +55,9 @@ def build_assets():
     # Asset 3 has no generated preview (real servers do this); the app should
     # fall back to the original rather than showing a broken card.
     assets[3]["previewMissing"] = True
+    # A "ghost": search still lists it but every media route fails and
+    # GET /assets/{id} answers 400, exactly like a permanently deleted asset.
+    assets[7]["ghost"] = True
     return assets
 
 ASSETS = build_assets()
@@ -224,19 +227,27 @@ class Handler(BaseHTTPRequestHandler):
                 },
             })
 
+        if method == "GET" and len(parts) == 3 and parts[1] == "assets":
+            asset = next((a for a in ASSETS if a["id"] == parts[2]), None)
+            if asset is None or asset.get("ghost"):
+                return self.send_json({"message": "Bad request"}, status=400)
+            return self.send_json(asset_dto(asset))
+
         if method == "GET" and len(parts) == 4 and parts[1] == "assets" and parts[3] == "thumbnail":
             asset = next((a for a in ASSETS if a["id"] == parts[2]), None)
             if asset is None:
                 return self.send_json({"message": "Not found"}, status=404)
             # Asset 3 mimics a preview Immich never generated: the thumbnail
             # 404s but the original is still served (see below).
+            if asset.get("ghost"):
+                return self.send_json({"message": "Bad request"}, status=400)
             if asset.get("previewMissing"):
                 return self.send_json({"message": "Not found"}, status=404)
             return self.send_png(png(asset["color"]))
 
         if method == "GET" and len(parts) == 4 and parts[1] == "assets" and parts[3] == "original":
             asset = next((a for a in ASSETS if a["id"] == parts[2]), None)
-            if asset is None or asset.get("originalMissing"):
+            if asset is None or asset.get("originalMissing") or asset.get("ghost"):
                 return self.send_json({"message": "Not found"}, status=404)
             return self.send_png(png(asset["color"], width=600, height=800))
 

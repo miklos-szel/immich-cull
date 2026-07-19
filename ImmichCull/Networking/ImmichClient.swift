@@ -152,6 +152,18 @@ struct ImmichClient: Sendable {
         apiURL("assets/\(assetID)/thumbnail").appending(queryItems: [URLQueryItem(name: "size", value: size)])
     }
 
+    /// Whether the server still has this asset. A permanently deleted asset
+    /// answers 400 here, while one that merely lacks a generated preview
+    /// answers 200 — which is the only reliable way to tell them apart.
+    /// Network failures report `true` so a hiccup never discards a good asset.
+    func assetExists(id: String) async -> Bool {
+        var request = URLRequest(url: apiURL("assets/\(id)"))
+        request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
+        guard let (_, response) = try? await session.data(for: request),
+              let http = response as? HTTPURLResponse else { return true }
+        return (200..<300).contains(http.statusCode)
+    }
+
     func originalURL(assetID: String) -> URL {
         apiURL("assets/\(assetID)/original")
     }
