@@ -2,6 +2,7 @@ import SwiftUI
 
 struct HomeView: View {
     @Environment(SettingsStore.self) private var settings
+    @Environment(\.scenePhase) private var scenePhase
     @State private var albums: [ImmichAlbum] = []
     @State private var loadError: String?
     @State private var isLoading = true
@@ -9,9 +10,12 @@ struct HomeView: View {
     @State private var entireRollSelected = true
     @State private var activeSelection: AlbumSelection?
     @State private var isShowingSettings = false
+    /// Cleanup screens are pushed onto this path; emptying it means we're back
+    /// on Home, which is one of the points where album counts may be stale.
+    @State private var cleanupPath: [CleanupRoute] = []
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $cleanupPath) {
             Group {
                 if let loadError {
                     ContentUnavailableView {
@@ -36,14 +40,23 @@ struct HomeView: View {
             .safeAreaInset(edge: .bottom) {
                 startButton
             }
-            .sheet(isPresented: $isShowingSettings) {
+            // Anything that can trash assets or change album membership
+            // refreshes the list on the way back, so counts stay truthful.
+            .sheet(isPresented: $isShowingSettings, onDismiss: refreshAlbums) {
                 SettingsView()
             }
-            .fullScreenCover(item: $activeSelection) { selection in
+            .fullScreenCover(item: $activeSelection, onDismiss: refreshAlbums) { selection in
                 CullView(selection: selection)
             }
             .navigationDestination(for: CleanupRoute.self) { route in
                 CleanupDestinationView(route: route)
+            }
+            .onChange(of: cleanupPath) { _, path in
+                if path.isEmpty { refreshAlbums() }
+            }
+            // Catches edits made elsewhere (e.g. the Immich web UI).
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .active { refreshAlbums() }
             }
             .task { await loadAlbums() }
         }
@@ -152,6 +165,11 @@ struct HomeView: View {
     private func reload() {
         isLoading = true
         loadError = nil
+        Task { await loadAlbums() }
+    }
+
+    /// Silent reload — no spinner, since the list is already on screen.
+    private func refreshAlbums() {
         Task { await loadAlbums() }
     }
 

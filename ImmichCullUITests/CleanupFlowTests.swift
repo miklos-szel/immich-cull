@@ -118,6 +118,32 @@ final class CleanupFlowTests: XCTestCase {
         waitForLabel(badgedTrashButton, matching: "label == 'Trash bin'")
     }
 
+    /// Album counts must reflect what culling did, without a manual refresh.
+    @MainActor
+    func testAlbumCountRefreshesAfterCulling() throws {
+        let app = launchConnectedApp()
+
+        let testAlbum = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Test Album'")).firstMatch
+        scrollUntilHittable(testAlbum, in: app)
+        XCTAssertTrue(testAlbum.waitForExistence(timeout: 15), "Album list should load")
+        XCTAssertEqual(testAlbum.label, "Test Album, 5 items", "Fixture starts with five")
+
+        // Cull just that album and bin one photo.
+        forceTap(testAlbum)
+        forceTap(app.buttons["Cull 1 Album"])
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH '1 of'")).firstMatch
+            .waitForExistence(timeout: 15), "First card should load")
+        app.swipeUp()
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH '2 of'")).firstMatch
+            .waitForExistence(timeout: 10), "Should advance after trashing")
+
+        // Returning to the main menu must show the new count.
+        forceTap(app.buttons["Close"])
+        let updated = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Test Album'")).firstMatch
+        XCTAssertTrue(updated.waitForExistence(timeout: 15), "Back on the album list")
+        waitForLabel(updated, matching: "label == 'Test Album, 4 items'")
+    }
+
     /// The album title opens a grid: tapping a photo continues from it, and
     /// selection mode trashes several at once.
     @MainActor

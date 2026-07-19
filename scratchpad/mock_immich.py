@@ -93,11 +93,15 @@ def asset_dto(asset):
 
 def album_dto(album_id, name):
     members = ALBUM_MEMBERS[album_id]
+    # Like Immich, the count excludes trashed (and deleted) assets, so the app
+    # can prove it refreshes album counts after culling.
+    by_id = {a["id"]: a for a in ASSETS}
+    live = [m for m in members if not by_id.get(m, {}).get("trashed", True)]
     return {
         "id": album_id,
         "albumName": name,
-        "assetCount": len(members),
-        "albumThumbnailAssetId": members[0] if members else None,
+        "assetCount": len(live),
+        "albumThumbnailAssetId": live[0] if live else None,
     }
 
 class Handler(BaseHTTPRequestHandler):
