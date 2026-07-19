@@ -6,7 +6,9 @@ struct HomeView: View {
     @State private var albums: [ImmichAlbum] = []
     @State private var loadError: String?
     @State private var isLoading = true
-    @State private var selectedAlbums: Set<ImmichAlbum> = []
+    /// Keyed by album ID, not by value: an album's assetCount changes as you
+    /// cull, and a value-keyed set would strand the old copy and double-count.
+    @State private var selectedAlbumIDs: Set<String> = []
     @State private var entireRollSelected = true
     @State private var activeSelection: AlbumSelection?
     @State private var isShowingSettings = false
@@ -89,7 +91,7 @@ struct HomeView: View {
                 ForEach(albums) { album in
                     AlbumRowView(
                         album: album,
-                        isSelected: selectedAlbums.contains(album),
+                        isSelected: selectedAlbumIDs.contains(album.id),
                         thumbnailURL: thumbnailURL(for: album),
                         apiKey: settings.apiKey,
                         toggle: { toggle(album) }
@@ -120,12 +122,12 @@ struct HomeView: View {
 
     private var startTitle: String {
         // Inflection markup doesn't render via String(localized:), so spell out the plural.
-        if entireRollSelected || selectedAlbums.isEmpty {
+        if entireRollSelected || selectedAlbumIDs.isEmpty {
             return String(localized: "Cull Entire Roll")
         }
-        switch selectedAlbums.count {
+        switch selectedAlbumIDs.count {
         case 1: return String(localized: "Cull 1 Album")
-        default: return String(localized: "Cull \(selectedAlbums.count) Albums")
+        default: return String(localized: "Cull \(selectedAlbumIDs.count) Albums")
         }
     }
 
@@ -136,24 +138,24 @@ struct HomeView: View {
 
     private func selectEntireRoll() {
         entireRollSelected = true
-        selectedAlbums.removeAll()
+        selectedAlbumIDs.removeAll()
     }
 
     private func toggle(_ album: ImmichAlbum) {
-        if selectedAlbums.contains(album) {
-            selectedAlbums.remove(album)
+        if selectedAlbumIDs.contains(album.id) {
+            selectedAlbumIDs.remove(album.id)
         } else {
-            selectedAlbums.insert(album)
+            selectedAlbumIDs.insert(album.id)
         }
         // Picking specific albums is mutually exclusive with the entire roll.
-        entireRollSelected = selectedAlbums.isEmpty
+        entireRollSelected = selectedAlbumIDs.isEmpty
     }
 
     private func start() {
-        if entireRollSelected || selectedAlbums.isEmpty {
+        if entireRollSelected || selectedAlbumIDs.isEmpty {
             activeSelection = .entireLibrary
         } else {
-            let ordered = albums.filter { selectedAlbums.contains($0) }
+            let ordered = albums.filter { selectedAlbumIDs.contains($0.id) }
             activeSelection = .albums(ordered)
         }
     }
@@ -180,6 +182,11 @@ struct HomeView: View {
         }
         do {
             albums = try await client.albums()
+            // Forget albums that no longer exist server-side.
+            selectedAlbumIDs.formIntersection(Set(albums.map(\.id)))
+            if selectedAlbumIDs.isEmpty {
+                entireRollSelected = true
+            }
             loadError = nil
         } catch {
             loadError = error.localizedDescription
