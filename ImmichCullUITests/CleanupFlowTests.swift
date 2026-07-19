@@ -142,6 +142,13 @@ final class CleanupFlowTests: XCTestCase {
         let updated = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Test Album'")).firstMatch
         XCTAssertTrue(updated.waitForExistence(timeout: 15), "Back on the album list")
         waitForLabel(updated, matching: "label == 'Test Album, 4 items'")
+
+        // The album must still be the (single) selection. Selection used to be
+        // keyed by value, so a changed count stranded the old entry and the
+        // start button reported two albums with one ticked.
+        XCTAssertTrue(updated.isSelected, "Selection should survive the count changing")
+        XCTAssertTrue(app.buttons["Cull 1 Album"].waitForExistence(timeout: 10),
+                      "Should still be culling exactly one album")
     }
 
     /// The album title opens a grid: tapping a photo continues from it, and
