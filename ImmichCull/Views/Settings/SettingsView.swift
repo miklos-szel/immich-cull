@@ -98,7 +98,7 @@ struct SettingsView: View {
                 Section {
                     Picker("Album", selection: $settings.destinationAlbumID) {
                         Text("None").tag("")
-                        ForEach(albums) { album in
+                        ForEach(sortedAlbums) { album in
                             Text(album.albumName).tag(album.id)
                         }
                     }
@@ -143,6 +143,12 @@ struct SettingsView: View {
             }
             .task { await loadAlbums() }
         }
+    }
+
+    /// Sorted at render rather than at load, because the "Review order" picker
+    /// sits in this same screen — the album list has to reorder as you change it.
+    private var sortedAlbums: [ImmichAlbum] {
+        albums.sorted(by: settings.order)
     }
 
     private func loadAlbums() async {
