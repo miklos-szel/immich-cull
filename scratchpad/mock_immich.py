@@ -5,6 +5,7 @@ Serves on 127.0.0.1:2283. API key: "test-key".
 Logs every mutating call to mock_immich.log (JSON lines) for post-run assertions.
 """
 import json
+import os
 import struct
 import sys
 import uuid
@@ -23,11 +24,34 @@ COLORS = [
     (170, 90, 210), (240, 130, 50), (70, 200, 190), (150, 150, 150),
 ]
 
+# Screenshots for the README are taken against this mock so no real photo is
+# ever involved. Flat colour blocks look nothing like a photo app, so this mode
+# renders soft gradients instead — they read as heavily blurred photographs
+# while being entirely generated. Off by default: the blur finder's fixtures
+# depend on flat images being sharp.
+PHOTO_STYLE = os.environ.get("MOCK_PHOTO_STYLE", "flat")
+
+
 def png(color, width=400, height=500):
     def chunk(tag, data):
         payload = tag + data
         return struct.pack(">I", len(data)) + payload + struct.pack(">I", zlib.crc32(payload))
-    raw = b"".join(b"\x00" + bytes(color) * width for _ in range(height))
+
+    if PHOTO_STYLE == "gradient":
+        rows = []
+        for y in range(height):
+            v = y / max(height - 1, 1)
+            row = bytearray(b"\x00")
+            for x in range(width):
+                h = x / max(width - 1, 1)
+                # Two overlapping ramps, so the result has a diagonal falloff
+                # rather than looking like a colour bar.
+                shade = 0.55 + 0.45 * (1 - v) * (0.35 + 0.65 * h)
+                row += bytes(min(255, int(c * shade)) for c in color)
+            rows.append(bytes(row))
+        raw = b"".join(rows)
+    else:
+        raw = b"".join(b"\x00" + bytes(color) * width for _ in range(height))
     return (b"\x89PNG\r\n\x1a\n"
             + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
             + chunk(b"IDAT", zlib.compress(raw))
@@ -71,6 +95,23 @@ ALBUM_MEMBERS = {
 TAGS = {}          # name -> tag id
 TAGGED = {}        # tag id -> set of asset ids
 
+# Tags the server already knows about, so the tag picker has something to show
+# before any culling run has created one. They start with no assets attached —
+# `culled` in particular must be empty, or every asset would look reviewed.
+SEED_TAG_NAMES = ["culled", "keep", "print"]
+
+# Distinct dates per album so a sort-order assertion can actually fail.
+ALBUM_DATES = {
+    TEST_ALBUM_ID: ("2024-06-01T00:00:00.000Z", "2024-06-30T00:00:00.000Z"),
+    KEEPERS_ALBUM_ID: ("2021-01-05T00:00:00.000Z", "2021-01-09T00:00:00.000Z"),
+}
+
+
+def seed_tags():
+    for name in SEED_TAG_NAMES:
+        tag_id = TAGS.setdefault(name, make_id(f"tag-{name}"))
+        TAGGED.setdefault(tag_id, set())
+
 
 def reset_state():
     """Restores the fixture so each UI test starts from identical content."""
@@ -82,6 +123,10 @@ def reset_state():
     })
     TAGS.clear()
     TAGGED.clear()
+    seed_tags()
+
+
+seed_tags()
 
 def log_event(event):
     with LOG_PATH.open("a") as fh:
@@ -100,11 +145,15 @@ def album_dto(album_id, name):
     # can prove it refreshes album counts after culling.
     by_id = {a["id"]: a for a in ASSETS}
     live = [m for m in members if not by_id.get(m, {}).get("trashed", True)]
+    start, end = ALBUM_DATES[album_id]
     return {
         "id": album_id,
         "albumName": name,
         "assetCount": len(live),
         "albumThumbnailAssetId": live[0] if live else None,
+        "startDate": start,
+        "endDate": end,
+        "updatedAt": end,
     }
 
 class Handler(BaseHTTPRequestHandler):
@@ -164,6 +213,12 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json([
                 album_dto(TEST_ALBUM_ID, "Test Album"),
                 album_dto(KEEPERS_ALBUM_ID, "Keepers"),
+            ])
+
+        if method == "GET" and path == "/api/tags":
+            return self.send_json([
+                {"id": tag_id, "name": name, "value": name}
+                for name, tag_id in sorted(TAGS.items())
             ])
 
         if method == "GET" and path == "/api/assets/statistics":

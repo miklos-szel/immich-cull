@@ -66,6 +66,7 @@ struct CullGridView: View {
                             selectedIDs: selectedIDs,
                             columns: CullGridMetrics.columns,
                             client: client,
+                            stateFor: session.state(for:),
                             onTap: handleTap
                         )
                         .tag(index)

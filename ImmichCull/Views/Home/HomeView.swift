@@ -7,9 +7,9 @@ struct HomeView: View {
     @State private var loadError: String?
     @State private var isLoading = true
     /// Keyed by album ID, not by value: an album's assetCount changes as you
-    /// cull, and a value-keyed set would strand the old copy and double-count.
-    @State private var selectedAlbumIDs: Set<String> = []
-    @State private var entireRollSelected = true
+    /// cull, and a value-keyed selection would strand the old copy.
+    /// Exactly one album at a time; nil means the entire roll.
+    @State private var selectedAlbumID: String?
     @State private var activeSelection: AlbumSelection?
     @State private var isShowingSettings = false
     @State private var isShowingTrashBin = false
@@ -35,7 +35,10 @@ struct HomeView: View {
                     albumList
                 }
             }
-            .navigationTitle("immich-cull")
+            // No title: the app's own name tells you nothing you don't already
+            // know, and an inline empty title lets the bar collapse to the
+            // toolbar buttons instead of reserving a large-title header.
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     TrashBinToolbarButton(
@@ -110,10 +113,13 @@ struct HomeView: View {
 
             Section {
                 EntireRollRowView(isSelected: entireRollSelected, toggle: selectEntireRoll)
-                ForEach(albums) { album in
+                // One ForEach over a reordered array, not a hoisted row above a
+                // ForEach: moving a row between two different structural slots
+                // changes its identity, so it would teleport rather than slide.
+                ForEach(displayAlbums) { album in
                     AlbumRowView(
                         album: album,
-                        isSelected: selectedAlbumIDs.contains(album.id),
+                        isSelected: selectedAlbumID == album.id,
                         thumbnailURL: thumbnailURL(for: album),
                         apiKey: settings.apiKey,
                         toggle: { toggle(album) }
@@ -140,15 +146,28 @@ struct HomeView: View {
         .disabled(isLoading && loadError == nil)
     }
 
+    /// Selection is a single optional ID, so "entire roll" is a fact about it
+    /// rather than a second flag that has to be kept in step.
+    private var entireRollSelected: Bool { selectedAlbumID == nil }
+
+    /// Sorted to match the review order, with the chosen album pulled to the
+    /// top so it sits directly under "Entire Roll" instead of wherever its
+    /// date happens to put it.
+    private var displayAlbums: [ImmichAlbum] {
+        let sorted = albums.sorted(by: settings.order)
+        guard let selectedAlbumID,
+              let index = sorted.firstIndex(where: { $0.id == selectedAlbumID }) else {
+            return sorted
+        }
+        var reordered = sorted
+        reordered.insert(reordered.remove(at: index), at: 0)
+        return reordered
+    }
+
     private var startTitle: String {
-        // Inflection markup doesn't render via String(localized:), so spell out the plural.
-        if entireRollSelected || selectedAlbumIDs.isEmpty {
-            return String(localized: "Cull Entire Roll")
-        }
-        switch selectedAlbumIDs.count {
-        case 1: return String(localized: "Cull 1 Album")
-        default: return String(localized: "Cull \(selectedAlbumIDs.count) Albums")
-        }
+        entireRollSelected
+            ? String(localized: "Cull Entire Roll")
+            : String(localized: "Cull 1 Album")
     }
 
     private func thumbnailURL(for album: ImmichAlbum) -> URL? {
@@ -157,27 +176,26 @@ struct HomeView: View {
     }
 
     private func selectEntireRoll() {
-        entireRollSelected = true
-        selectedAlbumIDs.removeAll()
+        withAnimation {
+            selectedAlbumID = nil
+        }
     }
 
+    /// Culling runs against one album at a time, so picking an album replaces
+    /// whatever was picked before; picking it again falls back to the whole roll.
     private func toggle(_ album: ImmichAlbum) {
-        if selectedAlbumIDs.contains(album.id) {
-            selectedAlbumIDs.remove(album.id)
-        } else {
-            selectedAlbumIDs.insert(album.id)
+        withAnimation {
+            selectedAlbumID = (selectedAlbumID == album.id) ? nil : album.id
         }
-        // Picking specific albums is mutually exclusive with the entire roll.
-        entireRollSelected = selectedAlbumIDs.isEmpty
     }
 
     private func start() {
-        if entireRollSelected || selectedAlbumIDs.isEmpty {
+        guard let selectedAlbumID,
+              let album = albums.first(where: { $0.id == selectedAlbumID }) else {
             activeSelection = .entireLibrary
-        } else {
-            let ordered = albums.filter { selectedAlbumIDs.contains($0.id) }
-            activeSelection = .albums(ordered)
+            return
         }
+        activeSelection = .albums([album])
     }
 
     private func showSettings() {
@@ -223,10 +241,9 @@ struct HomeView: View {
         }
         do {
             albums = try await client.albums()
-            // Forget albums that no longer exist server-side.
-            selectedAlbumIDs.formIntersection(Set(albums.map(\.id)))
-            if selectedAlbumIDs.isEmpty {
-                entireRollSelected = true
+            // Forget a selection whose album no longer exists server-side.
+            if let selectedAlbumID, !albums.contains(where: { $0.id == selectedAlbumID }) {
+                self.selectedAlbumID = nil
             }
             loadError = nil
         } catch {

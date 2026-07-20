@@ -40,6 +40,14 @@ struct CullView: View {
                         .accessibilityIdentifier("albumTitleButton")
                     }
                     ToolbarItem(placement: .topBarTrailing) {
+                        if let session {
+                            MediaFilterToolbarButton(
+                                filter: session.mediaFilter,
+                                select: session.setMediaFilter
+                            )
+                        }
+                    }
+                    ToolbarItem(placement: .topBarTrailing) {
                         TrashBinToolbarButton(count: trashCount, action: showTrashBin)
                     }
                 }

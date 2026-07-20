@@ -1,7 +1,9 @@
 import SwiftUI
-import AVKit
+import AVFoundation
 
-/// Muted, looping playback of an Immich video asset.
+/// Muted, looping playback of an Immich video asset. Rendered through
+/// `PlayerLayerView` rather than `VideoPlayer` so the letterbox bars take the
+/// card's background colour instead of black — see that file for why.
 struct VideoCardView: View {
     let url: URL
     let apiKey: String
@@ -12,7 +14,7 @@ struct VideoCardView: View {
     var body: some View {
         ZStack {
             if let player {
-                VideoPlayer(player: player)
+                PlayerLayerView(player: player)
                     .allowsHitTesting(false) // Let the card's drag gesture win.
             } else {
                 ProgressView()

@@ -51,6 +51,11 @@ final class StatsStore {
         case .skip: skipped = max(0, skipped + delta)
         case .saveToAlbum: savedToAlbum = max(0, savedToAlbum + delta)
         case .favorite: favorited = max(0, favorited + delta)
+        // Taking something back out counts against the tally it was added to,
+        // so the lifetime numbers describe what's there rather than how many
+        // times a swipe happened.
+        case .removeFromAlbum: savedToAlbum = max(0, savedToAlbum - delta)
+        case .unfavorite: favorited = max(0, favorited - delta)
         }
     }
 }

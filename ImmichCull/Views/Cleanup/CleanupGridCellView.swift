@@ -5,6 +5,9 @@ struct CleanupGridCellView: View {
     let asset: ImmichAsset
     let isSelected: Bool
     let caption: String?
+    /// Defaults to empty so the cleanup grids, which have no session to ask,
+    /// need no changes.
+    var state: AssetCullState = .init()
     var selectionTint: Color = .red
     let client: ImmichClient
     /// Left empty by grids that use `dragSelection`: that modifier claims the
@@ -45,6 +48,11 @@ struct CleanupGridCellView: View {
             .overlay {
                 RoundedRectangle(cornerRadius: 8)
                     .strokeBorder(selectionTint, lineWidth: isSelected ? 3 : 0)
+            }
+            // Leading, because the selection indicator owns the trailing corner.
+            .overlay(alignment: .topLeading) {
+                AssetStateBadgesView(state: state, compact: true)
+                    .padding(4)
             }
             .overlay(alignment: .topTrailing) {
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")

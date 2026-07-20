@@ -5,6 +5,7 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var albums: [ImmichAlbum] = []
+    @State private var tagNames: [String] = []
     @State private var isShowingSignOutConfirm = false
 
     var body: some View {
@@ -83,22 +84,31 @@ struct SettingsView: View {
 
                 Section {
                     Toggle("Offer checked photos again", isOn: $settings.reOfferChecked)
-                    LabeledContent("Tag name") {
-                        TextField("culled", text: $settings.checkedTagName)
-                            .multilineTextAlignment(.trailing)
-                            .autocorrectionDisabled()
-                            .textInputAutocapitalization(.never)
+                    NavigationLink {
+                        TagSelectionView()
+                    } label: {
+                        LabeledContent("Tags", value: checkedTagsSummary)
                     }
+                    .accessibilityIdentifier("checkedTagsLink")
+                    Picker("Mark culled with", selection: $settings.markTagName) {
+                        // The chosen tag need not exist yet — it is created on
+                        // demand when the first asset is marked.
+                        ForEach(markTagOptions, id: \.self) { name in
+                            Text(name).tag(name)
+                        }
+                    }
+                    .pickerStyle(.navigationLink)
+                    .accessibilityIdentifier("markTagPicker")
                 } header: {
-                    Text("Already checked")
+                    Text("Already culled")
                 } footer: {
-                    Text("Kept photos are tagged with this name in Immich so they aren't offered again.")
+                    Text("Photos carrying any of these tags aren't offered again. Culled photos are tagged with the one you mark with.")
                 }
 
                 Section {
                     Picker("Album", selection: $settings.destinationAlbumID) {
                         Text("None").tag("")
-                        ForEach(albums) { album in
+                        ForEach(sortedAlbums) { album in
                             Text(album.albumName).tag(album.id)
                         }
                     }
@@ -141,13 +151,49 @@ struct SettingsView: View {
             .onChange(of: settings.destinationAlbumID) {
                 settings.destinationAlbumName = albums.first { $0.id == settings.destinationAlbumID }?.albumName ?? ""
             }
-            .task { await loadAlbums() }
+            .task {
+                await loadAlbums()
+                await loadTags()
+            }
         }
+    }
+
+    private var checkedTagsSummary: String {
+        switch settings.checkedTagNames.count {
+        case 0: String(localized: "None")
+        case 1: settings.checkedTagNames[0]
+        default: String(localized: "\(settings.checkedTagNames.count) selected")
+        }
+    }
+
+    /// The write tag is offered from the same list you excluded by, plus
+    /// whatever is currently set — otherwise picking a tag the server hasn't
+    /// heard of yet would silently reset the selection.
+    private var markTagOptions: [String] {
+        var options = tagNames
+        if !options.contains(settings.markTagName) {
+            options.insert(settings.markTagName, at: 0)
+        }
+        return options
+    }
+
+    /// Sorted at render rather than at load, because the "Review order" picker
+    /// sits in this same screen — the album list has to reorder as you change it.
+    private var sortedAlbums: [ImmichAlbum] {
+        albums.sorted(by: settings.order)
     }
 
     private func loadAlbums() async {
         guard let client = settings.client else { return }
         albums = (try? await client.albums()) ?? []
+    }
+
+    private func loadTags() async {
+        guard let client = settings.client else { return }
+        let tags = (try? await client.tags()) ?? []
+        tagNames = tags.map(\.name).sorted {
+            $0.localizedStandardCompare($1) == .orderedAscending
+        }
     }
 
     private func confirmSignOut() {

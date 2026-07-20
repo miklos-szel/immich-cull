@@ -26,6 +26,22 @@ enum MediaTypeFilter: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
+    var systemImage: String {
+        switch self {
+        case .all: "photo.on.rectangle.angled"
+        case .photosOnly: "photo"
+        case .videosOnly: "video"
+        }
+    }
+
+    func includes(_ type: AssetType) -> Bool {
+        switch self {
+        case .all: type == .image || type == .video
+        case .photosOnly: type == .image
+        case .videosOnly: type == .video
+        }
+    }
+
     /// Builds the filter from two independent toggles. Turning both off would
     /// leave nothing to cull, so that falls back to showing everything.
     static func from(includePhotos: Bool, includeVideos: Bool) -> MediaTypeFilter {

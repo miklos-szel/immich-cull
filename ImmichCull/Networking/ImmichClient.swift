@@ -37,6 +37,10 @@ struct ImmichClient: Sendable {
         try await get("albums")
     }
 
+    func tags() async throws -> [ImmichTag] {
+        try await get("tags")
+    }
+
     func searchAssets(page: Int, size: Int, order: String, albumIDs: [String]?, tagIDs: [String]?,
                       trashedAfter: String? = nil, withDeleted: Bool? = nil,
                       type: String? = nil) async throws -> SearchResult {
