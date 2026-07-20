@@ -6,6 +6,7 @@ struct TagSelectionView: View {
     @Environment(SettingsStore.self) private var settings
     @State private var tags: [ImmichTag] = []
     @State private var isLoading = true
+    @State private var didLoadTags = false
     @State private var loadError: String?
 
     var body: some View {
@@ -55,7 +56,11 @@ struct TagSelectionView: View {
         .task { await loadTags() }
     }
 
+    /// Only meaningful once the server has actually told us what exists. On a
+    /// failed (or never-attempted) load `tags` is empty, and deriving from that
+    /// would label every selected tag as deleted from the server.
     private var orphanedNames: [String] {
+        guard didLoadTags else { return [] }
         let known = Set(tags.map(\.name))
         return settings.checkedTagNames.filter { !known.contains($0) }
     }
@@ -70,6 +75,7 @@ struct TagSelectionView: View {
 
     private func loadTags() async {
         guard let client = settings.client else {
+            loadError = String(localized: "Connect to your Immich server to choose tags.")
             isLoading = false
             return
         }
@@ -77,6 +83,7 @@ struct TagSelectionView: View {
             tags = try await client.tags().sorted {
                 $0.name.localizedStandardCompare($1.name) == .orderedAscending
             }
+            didLoadTags = true
             loadError = nil
         } catch {
             loadError = error.localizedDescription

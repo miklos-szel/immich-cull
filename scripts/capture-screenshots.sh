@@ -57,7 +57,7 @@ mkdir -p "$OUT_DIR"
 xcrun xcresulttool export attachments \
     --path "$RESULT_BUNDLE" \
     --output-path "$OUT_DIR" \
-    --test-id-filter "ScreenshotTests/testCaptureReadmeScreenshots()" 2>/dev/null \
+    --test-id "ScreenshotTests/testCaptureReadmeScreenshots()" 2>/dev/null \
     || xcrun xcresulttool export attachments --path "$RESULT_BUNDLE" --output-path "$OUT_DIR"
 
 # The exporter writes generated filenames plus a manifest; rename by the

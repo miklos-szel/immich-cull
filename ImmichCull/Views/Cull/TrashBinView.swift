@@ -128,6 +128,9 @@ struct TrashBinView: View {
         }
         .padding()
         .background(.bar)
+        // A permanent delete is mid-flight while the library search runs;
+        // tapping Delete or Empty Trash again would start a second one.
+        .disabled(isSearchingPhotoLibrary)
     }
 
     private var selectionActions: some View {

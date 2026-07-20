@@ -21,8 +21,13 @@ struct ImmichAlbum: Codable, Identifiable, Hashable, Sendable {
         return nil
     }
 
-    /// Immich sends ISO 8601 with fractional seconds, e.g. "2024-01-01T12:30:00.000Z".
+    /// Immich sends ISO 8601 with fractional seconds, e.g. "2024-01-01T12:30:00.000Z",
+    /// but not every field on every version carries the fractional part — and a
+    /// parse failure here silently drops the album to the bottom of the list.
     private static func parse(_ value: String) -> Date? {
-        try? Date.ISO8601FormatStyle(includingFractionalSeconds: true).parse(value)
+        if let date = try? Date.ISO8601FormatStyle(includingFractionalSeconds: true).parse(value) {
+            return date
+        }
+        return try? Date.ISO8601FormatStyle().parse(value)
     }
 }

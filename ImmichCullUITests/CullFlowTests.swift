@@ -140,6 +140,7 @@ final class CullFlowTests: XCTestCase {
         let keepers = albumRow(named: "Keepers", in: app)
         XCTAssertTrue(keepers.waitForExistence(timeout: 15), "Album list should appear")
         let testAlbum = albumRow(named: "Test Album", in: app)
+        XCTAssertTrue(testAlbum.waitForExistence(timeout: 15), "Test Album row should appear")
         XCTAssertTrue(testAlbum.frame.minY < keepers.frame.minY,
                       "Newest album should sort first before any selection")
 

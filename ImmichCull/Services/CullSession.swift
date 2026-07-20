@@ -298,7 +298,7 @@ final class CullSession {
         case .removeFromAlbum: savedToAlbumCount += 1
         case .unfavorite: favoritedCount += 1
         }
-        revertState(record.kind, to: record.asset.id)
+        revertState(record)
         reviewedIDs.remove(record.asset.id)
         queue.insert(record.asset, at: 0)
         stats?.revert(record.kind)
@@ -334,17 +334,21 @@ final class CullSession {
     /// Mirror of `applyState` for `undo`. The checked flag follows `revert`'s
     /// asymmetry: undoing a removal leaves the asset marked checked, because
     /// the removal did not make it unreviewed.
-    private func revertState(_ kind: CullActionKind, to assetID: String) {
+    private func revertState(_ record: CullActionRecord) {
+        let assetID = record.asset.id
         var state = assetStates[assetID] ?? AssetCullState()
-        switch kind {
+        // Restored rather than cleared: the asset may have carried the tag
+        // before the swipe, in which case the swipe didn't make it checked and
+        // the undo shouldn't make it unchecked.
+        switch record.kind {
         case .trash: break
-        case .skip: state.isChecked = false
+        case .skip: state.isChecked = record.wasChecked
         case .saveToAlbum:
             state.isInDestinationAlbum = false
-            state.isChecked = false
+            state.isChecked = record.wasChecked
         case .favorite:
             state.isFavorite = false
-            state.isChecked = false
+            state.isChecked = record.wasChecked
         case .removeFromAlbum: state.isInDestinationAlbum = true
         case .unfavorite: state.isFavorite = true
         }
@@ -387,9 +391,11 @@ final class CullSession {
         case .removeFromAlbum: savedToAlbumCount = max(0, savedToAlbumCount - 1)
         case .unfavorite: favoritedCount = max(0, favoritedCount - 1)
         }
+        // Snapshotted before applyState, which is what sets isChecked.
+        let wasChecked = state(for: asset).isChecked
         applyState(kind, to: asset.id)
         reviewedIDs.insert(asset.id)
-        undoStack.append(CullActionRecord(asset: asset, kind: kind))
+        undoStack.append(CullActionRecord(asset: asset, kind: kind, wasChecked: wasChecked))
         // Whatever was suppressing undo, acting again gives it a target.
         undoSuppressed = false
         stats?.record(kind)
@@ -434,13 +440,13 @@ final class CullSession {
             case .trash:
                 try await client.restoreAssets(ids: [record.asset.id])
             case .skip:
-                try await unmarkChecked(record.asset)
+                try await unmarkCheckedIfNewlyChecked(record)
             case .saveToAlbum:
                 try await client.removeAssets(fromAlbum: destinationAlbumID, ids: [record.asset.id])
-                try await unmarkChecked(record.asset)
+                try await unmarkCheckedIfNewlyChecked(record)
             case .favorite:
                 try await client.setFavorite(ids: [record.asset.id], isFavorite: false)
-                try await unmarkChecked(record.asset)
+                try await unmarkCheckedIfNewlyChecked(record)
             // Deliberately asymmetric with the two above: undoing a *removal*
             // restores membership but leaves the checked tag alone. The asset
             // was already reviewed before the toggle, so unmarking it here
@@ -499,6 +505,15 @@ final class CullSession {
     private func unmarkChecked(_ asset: ImmichAsset) async throws {
         guard let checkedTag else { return }
         try await client.untagAssets(tagID: checkedTag.id, assetIDs: [asset.id])
+    }
+
+    /// An undo only takes back the tag *this* action wrote. When the asset was
+    /// already tagged before the swipe — which "Offer checked photos again"
+    /// makes possible — the tag isn't ours to remove, and stripping it would
+    /// re-offer an asset the user culled in an earlier run.
+    private func unmarkCheckedIfNewlyChecked(_ record: CullActionRecord) async throws {
+        guard !record.wasChecked else { return }
+        try await unmarkChecked(record.asset)
     }
 
     // MARK: Loading
