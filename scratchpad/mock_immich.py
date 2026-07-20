@@ -71,6 +71,23 @@ ALBUM_MEMBERS = {
 TAGS = {}          # name -> tag id
 TAGGED = {}        # tag id -> set of asset ids
 
+# Tags the server already knows about, so the tag picker has something to show
+# before any culling run has created one. They start with no assets attached —
+# `culled` in particular must be empty, or every asset would look reviewed.
+SEED_TAG_NAMES = ["culled", "keep", "print"]
+
+# Distinct dates per album so a sort-order assertion can actually fail.
+ALBUM_DATES = {
+    TEST_ALBUM_ID: ("2024-06-01T00:00:00.000Z", "2024-06-30T00:00:00.000Z"),
+    KEEPERS_ALBUM_ID: ("2021-01-05T00:00:00.000Z", "2021-01-09T00:00:00.000Z"),
+}
+
+
+def seed_tags():
+    for name in SEED_TAG_NAMES:
+        tag_id = TAGS.setdefault(name, make_id(f"tag-{name}"))
+        TAGGED.setdefault(tag_id, set())
+
 
 def reset_state():
     """Restores the fixture so each UI test starts from identical content."""
@@ -82,6 +99,10 @@ def reset_state():
     })
     TAGS.clear()
     TAGGED.clear()
+    seed_tags()
+
+
+seed_tags()
 
 def log_event(event):
     with LOG_PATH.open("a") as fh:
@@ -100,11 +121,15 @@ def album_dto(album_id, name):
     # can prove it refreshes album counts after culling.
     by_id = {a["id"]: a for a in ASSETS}
     live = [m for m in members if not by_id.get(m, {}).get("trashed", True)]
+    start, end = ALBUM_DATES[album_id]
     return {
         "id": album_id,
         "albumName": name,
         "assetCount": len(live),
         "albumThumbnailAssetId": live[0] if live else None,
+        "startDate": start,
+        "endDate": end,
+        "updatedAt": end,
     }
 
 class Handler(BaseHTTPRequestHandler):
@@ -164,6 +189,12 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json([
                 album_dto(TEST_ALBUM_ID, "Test Album"),
                 album_dto(KEEPERS_ALBUM_ID, "Keepers"),
+            ])
+
+        if method == "GET" and path == "/api/tags":
+            return self.send_json([
+                {"id": tag_id, "name": name, "value": name}
+                for name, tag_id in sorted(TAGS.items())
             ])
 
         if method == "GET" and path == "/api/assets/statistics":
