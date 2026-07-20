@@ -22,7 +22,10 @@ final class CullSession {
     private let mediaFilter: MediaTypeFilter
     private let destinationAlbumID: String
     private let reOfferChecked: Bool
-    private let checkedTagName: String
+    /// Tags that mean "already culled" for the purpose of skipping assets.
+    private let checkedTagNames: [String]
+    /// The single tag written when marking an asset culled.
+    private let markTagName: String
 
     private(set) var phase: Phase = .loading
     private(set) var queue: [ImmichAsset] = []
@@ -73,7 +76,8 @@ final class CullSession {
         mediaFilter = settings.mediaFilter
         destinationAlbumID = settings.destinationAlbumID
         reOfferChecked = settings.reOfferChecked
-        checkedTagName = settings.checkedTagName
+        checkedTagNames = settings.checkedTagNames
+        markTagName = settings.markTagName
         alsoDeleteFromPhotos = settings.alsoDeleteFromPhotos
     }
 
@@ -81,17 +85,18 @@ final class CullSession {
         phase = .loading
         do {
             // The tag is needed for marking even when checked assets are re-offered.
-            let tag = try await client.upsertTag(named: checkedTagName)
-            checkedTag = tag
+            let markTag = try await client.upsertTag(named: markTagName)
+            checkedTag = markTag
 
-            var checkedIDs: Set<String> = []
-            if !reOfferChecked {
-                checkedIDs = try await fetchCheckedIDs(tagID: tag.id)
-            }
+            // Fetched unconditionally, unlike the exclusion below: the "culled"
+            // badge needs to know which assets are already tagged even when
+            // they're being re-offered, which is the only time it's visible.
+            let checkedIDs = try await fetchCheckedIDs(markTagID: markTag.id)
 
             let assets = try await fetchAllAssets()
             queue = assets.filter { asset in
-                (asset.type == .image || asset.type == .video) && !checkedIDs.contains(asset.id)
+                guard asset.type == .image || asset.type == .video else { return false }
+                return reOfferChecked || !checkedIDs.contains(asset.id)
             }
             totalCount = queue.count
             phase = queue.isEmpty ? .finished : .active
@@ -355,10 +360,33 @@ final class CullSession {
                                      type: mediaFilter.searchType)
     }
 
-    private func fetchCheckedIDs(tagID: String) async throws -> Set<String> {
-        let checked = try await client.fetchAssets(albumIDs: nil, tagIDs: [tagID],
-                                                   order: order.apiValue, limit: .max)
-        return Set(checked.map(\.id))
+    /// Every asset carrying any of the configured "already culled" tags.
+    ///
+    /// One request per tag, in parallel: each pages to `limit: .max`, so doing
+    /// them in series would visibly delay the first card on a large library.
+    /// They're fetched separately rather than passed to the search as one
+    /// `tagIds` array because Immich's AND/OR semantics for multiple tags
+    /// aren't worth guessing at — a union is what's wanted, unambiguously.
+    private func fetchCheckedIDs(markTagID: String) async throws -> Set<String> {
+        let all = try await client.tags()
+        var tagIDs = Set(all.filter { checkedTagNames.contains($0.name) }.map(\.id))
+        // Whatever we write, we honour: an asset this app marked must count as
+        // culled even if the mark tag was never added to the exclusion list.
+        tagIDs.insert(markTagID)
+
+        return try await withThrowingTaskGroup(of: [ImmichAsset].self) { group in
+            for tagID in tagIDs {
+                group.addTask { [client, order] in
+                    try await client.fetchAssets(albumIDs: nil, tagIDs: [tagID],
+                                                 order: order.apiValue, limit: .max)
+                }
+            }
+            var ids: Set<String> = []
+            for try await assets in group {
+                ids.formUnion(assets.map(\.id))
+            }
+            return ids
+        }
     }
 
     private func prefetchUpcoming() {

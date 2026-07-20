@@ -10,7 +10,12 @@ final class SettingsStore {
         static let destinationAlbumID = "destinationAlbumID"
         static let destinationAlbumName = "destinationAlbumName"
         static let reOfferChecked = "reOfferChecked"
-        static let checkedTagName = "checkedTagName"
+        /// Superseded by `checkedTagNames` + `markTagName`; still read once by
+        /// the migration in `init`.
+        static let legacyCheckedTagName = "checkedTagName"
+        static let checkedTagNames = "checkedTagNames"
+        static let markTagName = "markTagName"
+        static let didMigrateTags = "didMigrateTags"
         static let appearance = "appearance"
         static let showCardInfo = "showCardInfo"
         static let alsoDeleteFromPhotos = "alsoDeleteFromPhotos"
@@ -42,8 +47,16 @@ final class SettingsStore {
     var reOfferChecked: Bool {
         didSet { UserDefaults.standard.set(reOfferChecked, forKey: Keys.reOfferChecked) }
     }
-    var checkedTagName: String {
-        didSet { UserDefaults.standard.set(checkedTagName, forKey: Keys.checkedTagName) }
+    /// Tags that mean "already culled". An asset carrying any of them is
+    /// treated as reviewed and left out of the run unless `reOfferChecked`.
+    var checkedTagNames: [String] {
+        didSet { UserDefaults.standard.set(checkedTagNames, forKey: Keys.checkedTagNames) }
+    }
+    /// The one tag actually written when an asset is marked reviewed. Separate
+    /// from `checkedTagNames` because reading many tags and writing one are
+    /// different jobs — you may want to honour a tag you never apply yourself.
+    var markTagName: String {
+        didSet { UserDefaults.standard.set(markTagName, forKey: Keys.markTagName) }
     }
     var appearance: AppTheme {
         didSet { UserDefaults.standard.set(appearance.rawValue, forKey: Keys.appearance) }
@@ -113,8 +126,7 @@ final class SettingsStore {
         destinationAlbumID = defaults.string(forKey: Keys.destinationAlbumID) ?? ""
         destinationAlbumName = defaults.string(forKey: Keys.destinationAlbumName) ?? ""
         reOfferChecked = defaults.bool(forKey: Keys.reOfferChecked)
-        let tagName = defaults.string(forKey: Keys.checkedTagName) ?? ""
-        checkedTagName = tagName.isEmpty ? "culled" : tagName
+        (checkedTagNames, markTagName) = Self.loadTagSettings(from: defaults)
         // Defaults to .system, i.e. follow the device appearance.
         appearance = AppTheme(rawValue: defaults.string(forKey: Keys.appearance) ?? "") ?? .system
         showCardInfo = defaults.bool(forKey: Keys.showCardInfo) // Defaults to false (hidden).
@@ -133,6 +145,11 @@ final class SettingsStore {
             destinationAlbumID = albumID
             destinationAlbumName = environment["UITEST_ALBUM_NAME"] ?? "Album"
         }
+        // Same reasoning for the tag settings, which are two screens deep.
+        if let tags = environment["UITEST_CHECKED_TAGS"] {
+            checkedTagNames = tags.split(separator: ",").map(String.init)
+            markTagName = checkedTagNames.first ?? markTagName
+        }
         // Direct connection injection for automated/visual test runs.
         if let url = environment["UITEST_SERVER_URL"] {
             serverURLString = url
@@ -144,6 +161,32 @@ final class SettingsStore {
         if environment["UITEST_DISABLE_PHOTO_DELETE"] != nil {
             alsoDeleteFromPhotos = false
         }
+    }
+
+    /// Reads the tag settings, migrating the single `checkedTagName` this app
+    /// used to store into the exclusion list plus the write tag.
+    ///
+    /// The write is explicit rather than relying on the `didSet` accessors:
+    /// `didSet` does not fire for the first assignment to a property inside
+    /// `init`, which is what lets the other settings load without rewriting
+    /// themselves. A migration written that way would silently re-derive from
+    /// the legacy key on every launch instead of completing once, so a later
+    /// edit to the list could be undone by the next launch.
+    private static func loadTagSettings(from defaults: UserDefaults) -> (names: [String], mark: String) {
+        let fallback = "culled"
+
+        if !defaults.bool(forKey: Keys.didMigrateTags) {
+            let legacy = defaults.string(forKey: Keys.legacyCheckedTagName) ?? ""
+            let name = legacy.isEmpty ? fallback : legacy
+            defaults.set([name], forKey: Keys.checkedTagNames)
+            defaults.set(name, forKey: Keys.markTagName)
+            defaults.set(true, forKey: Keys.didMigrateTags)
+            return ([name], name)
+        }
+
+        let stored = defaults.stringArray(forKey: Keys.checkedTagNames) ?? []
+        let mark = defaults.string(forKey: Keys.markTagName) ?? ""
+        return (stored, mark.isEmpty ? fallback : mark)
     }
 
     var serverURL: URL? {
