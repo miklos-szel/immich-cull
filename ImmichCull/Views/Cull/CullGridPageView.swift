@@ -8,6 +8,9 @@ struct CullGridPageView: View {
     let selectedIDs: Set<String>
     let columns: Int
     let client: ImmichClient
+    /// A closure rather than the session itself, so the page view stays a plain
+    /// renderer with nothing to ask about the run in progress.
+    let stateFor: (ImmichAsset) -> AssetCullState
     let onTap: (ImmichAsset) -> Void
 
     var body: some View {
@@ -19,6 +22,7 @@ struct CullGridPageView: View {
                             asset: asset,
                             isSelected: selectedIDs.contains(asset.id),
                             caption: nil,
+                            state: stateFor(asset),
                             client: client,
                             toggle: { onTap(asset) }
                         )

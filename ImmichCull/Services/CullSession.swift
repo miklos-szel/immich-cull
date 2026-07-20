@@ -46,8 +46,14 @@ final class CullSession {
     /// local photo library once the run finishes.
     private(set) var trashedAssets: [ImmichAsset] = []
 
+    /// Per-asset state driving the card/grid badges and the add-or-remove
+    /// decision for the toggling actions. See `AssetCullState`.
+    private(set) var assetStates: [String: AssetCullState] = [:]
+
     private var checkedTag: ImmichTag?
     private var undoStack: [CullActionRecord] = []
+    /// Set by `goToPreviousImage`, cleared by the next action.
+    private var undoSuppressed = false
     /// In-flight server work per asset, so an undo can never overtake the
     /// action it reverses (e.g. restore landing before the delete).
     private var pendingOperations: [String: Task<Void, Never>] = [:]
@@ -57,7 +63,8 @@ final class CullSession {
     /// The image an undo / "previous" action would bring back, for paging preview.
     /// What `undo` would bring back — including a deletion.
     var previousAsset: ImmichAsset? { undoStack.last?.asset }
-    var canUndo: Bool { !undoStack.isEmpty }
+    /// False right after a back-step: see `goToPreviousImage` for why.
+    var canUndo: Bool { !undoStack.isEmpty && !undoSuppressed }
     /// What "previous image" would show: the last reviewed photo that wasn't
     /// deleted, since going back steps over deletions instead of reviving them.
     var priorReviewedAsset: ImmichAsset? {
@@ -65,6 +72,10 @@ final class CullSession {
     }
     var canGoToPreviousImage: Bool { priorReviewedAsset != nil }
     var hasDestinationAlbum: Bool { !destinationAlbumID.isEmpty }
+
+    func state(for asset: ImmichAsset) -> AssetCullState {
+        assetStates[asset.id] ?? AssetCullState()
+    }
 
     private let stats: StatsStore?
 
@@ -98,6 +109,7 @@ final class CullSession {
                 guard asset.type == .image || asset.type == .video else { return false }
                 return reOfferChecked || !checkedIDs.contains(asset.id)
             }
+            await seedStates(checkedIDs: checkedIDs)
             totalCount = queue.count
             phase = queue.isEmpty ? .finished : .active
             prefetchUpcoming()
@@ -117,35 +129,53 @@ final class CullSession {
         commit(.skip)
     }
 
+    /// Adds the current asset to the destination album, or takes it back out if
+    /// it's already there. One gesture both ways: once something is in the
+    /// album there was previously no way to remove it without leaving the app.
     func saveCurrentToAlbum() {
         guard hasDestinationAlbum else {
             errorMessage = String(localized: "Choose a destination album in Settings first.")
             return
         }
-        commit(.saveToAlbum)
+        guard let current else { return }
+        commit(state(for: current).isInDestinationAlbum ? .removeFromAlbum : .saveToAlbum)
     }
 
+    /// Favorites the current asset, or un-favorites it if it already is.
     func favoriteCurrent() {
-        commit(.favorite)
+        guard let current else { return }
+        commit(state(for: current).isFavorite ? .unfavorite : .favorite)
     }
 
-    /// Steps back to the previously reviewed image. Going back also rolls back
-    /// what was done to that image — leaving it trashed/tagged while showing it
-    /// as the current card would put the queue and the server out of sync.
-    /// Steps back to the photo *before* whatever was just deleted, leaving the
-    /// deletion alone. Going back to look at what you did shouldn't quietly
-    /// un-delete something — that's `undo`'s job, and the trash bin can restore
-    /// it either way.
+    /// Steps back to the photo before whatever was just done, leaving what was
+    /// done alone. Glancing back at the last photo shouldn't quietly un-delete
+    /// it, un-favorite it, or pull it out of the album — that's `undo`'s job.
+    /// To change your mind about the photo you stepped back to, swipe again:
+    /// favorite and add-to-album both toggle.
     ///
-    /// Trashed entries are dropped from the undo stack rather than reverted,
-    /// for the same reason `forgetTrashedAssets` does it: re-showing an asset
-    /// that is still trashed on the server desyncs the queue from it.
+    /// Deletions are stepped *over* rather than re-shown, for the same reason
+    /// `forgetTrashedAssets` drops them: re-showing an asset that is still
+    /// trashed on the server desyncs the queue from it. Everything else still
+    /// exists server-side, so re-showing it without a rollback is safe.
+    ///
+    /// This deliberately does not delegate to `undo`. Undo's bookkeeping
+    /// decrements the per-kind counters and the lifetime stats *because* a
+    /// matching server revert follows it; running that half without the revert
+    /// would drift the counters, the stats and the badges permanently away from
+    /// what the server actually holds.
     func goToPreviousImage() {
         while let record = undoStack.last, record.kind == .trash {
             undoStack.removeLast()
         }
-        guard canGoToPreviousImage else { return }
-        undo()
+        guard let record = undoStack.popLast() else { return }
+        reviewedCount -= 1
+        queue.insert(record.asset, at: 0)
+        phase = .active
+        // The record this button would have undone is gone, so `undoStack.last`
+        // now points at an earlier, off-screen asset. Leaving Undo live would
+        // silently revert something you aren't looking at.
+        undoSuppressed = true
+        prefetchUpcoming()
     }
 
     /// Continues the run from `asset`: it becomes the current card and the
@@ -170,6 +200,7 @@ final class CullSession {
     func dropUnavailable(_ asset: ImmichAsset) {
         guard queue.contains(where: { $0.id == asset.id }) else { return }
         queue.removeAll { $0.id == asset.id }
+        assetStates.removeValue(forKey: asset.id)
         totalCount = max(reviewedCount, totalCount - 1)
         if queue.isEmpty {
             phase = .finished
@@ -191,6 +222,7 @@ final class CullSession {
             undoStack.append(CullActionRecord(asset: asset, kind: .trash))
             stats?.record(.trash)
         }
+        undoSuppressed = false
         if queue.isEmpty {
             phase = .finished
         }
@@ -219,13 +251,59 @@ final class CullSession {
         case .skip: skippedCount -= 1
         case .saveToAlbum: savedToAlbumCount -= 1
         case .favorite: favoritedCount -= 1
+        case .removeFromAlbum: savedToAlbumCount += 1
+        case .unfavorite: favoritedCount += 1
         }
+        revertState(record.kind, to: record.asset.id)
         queue.insert(record.asset, at: 0)
         stats?.revert(record.kind)
         phase = .active
         enqueue(record.asset.id) { [weak self] in
             await self?.revert(record)
         }
+    }
+
+    /// Applied optimistically, at swipe time rather than when the request
+    /// lands, so the badge flips with the gesture.
+    private func applyState(_ kind: CullActionKind, to assetID: String) {
+        var state = assetStates[assetID] ?? AssetCullState()
+        switch kind {
+        case .trash: break
+        case .skip: state.isChecked = true
+        case .saveToAlbum:
+            state.isInDestinationAlbum = true
+            state.isChecked = true
+        case .removeFromAlbum:
+            state.isInDestinationAlbum = false
+            state.isChecked = true
+        case .favorite:
+            state.isFavorite = true
+            state.isChecked = true
+        case .unfavorite:
+            state.isFavorite = false
+            state.isChecked = true
+        }
+        assetStates[assetID] = state
+    }
+
+    /// Mirror of `applyState` for `undo`. The checked flag follows `revert`'s
+    /// asymmetry: undoing a removal leaves the asset marked checked, because
+    /// the removal did not make it unreviewed.
+    private func revertState(_ kind: CullActionKind, to assetID: String) {
+        var state = assetStates[assetID] ?? AssetCullState()
+        switch kind {
+        case .trash: break
+        case .skip: state.isChecked = false
+        case .saveToAlbum:
+            state.isInDestinationAlbum = false
+            state.isChecked = false
+        case .favorite:
+            state.isFavorite = false
+            state.isChecked = false
+        case .removeFromAlbum: state.isInDestinationAlbum = true
+        case .unfavorite: state.isFavorite = true
+        }
+        assetStates[assetID] = state
     }
 
     /// Bulk variant of `enqueue`: waits for every asset's in-flight work, then
@@ -261,8 +339,13 @@ final class CullSession {
         case .skip: skippedCount += 1
         case .saveToAlbum: savedToAlbumCount += 1
         case .favorite: favoritedCount += 1
+        case .removeFromAlbum: savedToAlbumCount = max(0, savedToAlbumCount - 1)
+        case .unfavorite: favoritedCount = max(0, favoritedCount - 1)
         }
+        applyState(kind, to: asset.id)
         undoStack.append(CullActionRecord(asset: asset, kind: kind))
+        // Whatever was suppressing undo, acting again gives it a target.
+        undoSuppressed = false
         stats?.record(kind)
         if queue.isEmpty {
             phase = .finished
@@ -283,8 +366,14 @@ final class CullSession {
             case .saveToAlbum:
                 try await client.addAssets(toAlbum: destinationAlbumID, ids: [asset.id])
                 try await markChecked(asset)
+            case .removeFromAlbum:
+                try await client.removeAssets(fromAlbum: destinationAlbumID, ids: [asset.id])
+                try await markChecked(asset)
             case .favorite:
                 try await client.setFavorite(ids: [asset.id], isFavorite: true)
+                try await markChecked(asset)
+            case .unfavorite:
+                try await client.setFavorite(ids: [asset.id], isFavorite: false)
                 try await markChecked(asset)
             }
         } catch {
@@ -306,6 +395,14 @@ final class CullSession {
             case .favorite:
                 try await client.setFavorite(ids: [record.asset.id], isFavorite: false)
                 try await unmarkChecked(record.asset)
+            // Deliberately asymmetric with the two above: undoing a *removal*
+            // restores membership but leaves the checked tag alone. The asset
+            // was already reviewed before the toggle, so unmarking it here
+            // would put it back in the queue on the next run.
+            case .removeFromAlbum:
+                try await client.addAssets(toAlbum: destinationAlbumID, ids: [record.asset.id])
+            case .unfavorite:
+                try await client.setFavorite(ids: [record.asset.id], isFavorite: true)
             }
         } catch {
             errorMessage = error.localizedDescription
@@ -358,6 +455,30 @@ final class CullSession {
         try await client.fetchAssets(albumIDs: selection.albumIDs, tagIDs: nil,
                                      order: order.apiValue, limit: Self.maxAssets,
                                      type: mediaFilter.searchType)
+    }
+
+    /// Records what is already true of each queued asset, so the badges are
+    /// right on the very first card rather than only after you act on it.
+    ///
+    /// Album membership needs its own request: the search response says nothing
+    /// about which albums an asset belongs to. A failure here is not fatal —
+    /// the badge is missing information, not wrong — so it degrades to "not in
+    /// the album" rather than failing the session.
+    private func seedStates(checkedIDs: Set<String>) async {
+        var albumMemberIDs: Set<String> = []
+        if hasDestinationAlbum {
+            let members = try? await client.fetchAssets(albumIDs: [destinationAlbumID], tagIDs: nil,
+                                                        order: order.apiValue, limit: Self.maxAssets)
+            albumMemberIDs = Set((members ?? []).map(\.id))
+        }
+
+        assetStates = queue.reduce(into: [:]) { states, asset in
+            states[asset.id] = AssetCullState(
+                isFavorite: asset.isFavorite ?? false,
+                isInDestinationAlbum: albumMemberIDs.contains(asset.id),
+                isChecked: checkedIDs.contains(asset.id)
+            )
+        }
     }
 
     /// Every asset carrying any of the configured "already culled" tags.

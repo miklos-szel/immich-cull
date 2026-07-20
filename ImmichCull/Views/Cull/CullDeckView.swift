@@ -46,6 +46,7 @@ struct CullDeckView: View {
                         asset: card.asset,
                         client: client,
                         isTopCard: card.slot == 0,
+                        state: session.state(for: card.asset),
                         // Skip past assets the server no longer has, rather
                         // than parking a dead card in front of the user.
                         onUnavailable: {

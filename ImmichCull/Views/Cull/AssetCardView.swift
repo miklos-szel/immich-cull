@@ -5,6 +5,7 @@ struct AssetCardView: View {
     let asset: ImmichAsset
     let client: ImmichClient
     let isTopCard: Bool
+    var state: AssetCullState = .init()
     /// Called when the server has neither a preview nor the original.
     var onUnavailable: (() -> Void)?
 
@@ -28,6 +29,11 @@ struct AssetCardView: View {
         // so the card blends into the screen instead of sitting in a black box.
         .background(.background)
         .clipShape(.rect(cornerRadius: 16))
+        // Top *leading*: the trash marker owns the top centre of the deck.
+        .overlay(alignment: .topLeading) {
+            AssetStateBadgesView(state: state)
+                .padding(12)
+        }
         .accessibilityLabel(asset.originalFileName)
     }
 }
