@@ -19,7 +19,9 @@ final class CullSession {
     private let client: ImmichClient
     private let selection: AlbumSelection
     private let order: CullOrder
-    private let mediaFilter: MediaTypeFilter
+    /// Changeable mid-run from the cull screen, unlike `order`: deciding you
+    /// only want to deal with videos is a thing you realise partway through.
+    private(set) var mediaFilter: MediaTypeFilter
     private let destinationAlbumID: String
     private let reOfferChecked: Bool
     /// Tags that mean "already culled" for the purpose of skipping assets.
@@ -50,10 +52,19 @@ final class CullSession {
     /// decision for the toggling actions. See `AssetCullState`.
     private(set) var assetStates: [String: AssetCullState] = [:]
 
+    /// Everything the run loaded, before the media filter. Retained so
+    /// switching the filter mid-run can bring assets back without refetching.
+    private var allAssets: [ImmichAsset] = []
+    /// Assets that have left the queue and must not be offered again by a
+    /// filter change: reviewed ones, and ones the server turned out not to have.
+    private var reviewedIDs: Set<String> = []
+    private var droppedIDs: Set<String> = []
+
     private var checkedTag: ImmichTag?
     private var undoStack: [CullActionRecord] = []
     /// Set by `goToPreviousImage`, cleared by the next action.
     private var undoSuppressed = false
+    private var didRunPhotoCleanup = false
     /// In-flight server work per asset, so an undo can never overtake the
     /// action it reverses (e.g. restore landing before the delete).
     private var pendingOperations: [String: Task<Void, Never>] = [:]
@@ -104,11 +115,14 @@ final class CullSession {
             // they're being re-offered, which is the only time it's visible.
             let checkedIDs = try await fetchCheckedIDs(markTagID: markTag.id)
 
+            // Both media types are fetched regardless of the filter, so
+            // switching it mid-run is a local operation rather than a refetch.
             let assets = try await fetchAllAssets()
-            queue = assets.filter { asset in
+            allAssets = assets.filter { asset in
                 guard asset.type == .image || asset.type == .video else { return false }
                 return reOfferChecked || !checkedIDs.contains(asset.id)
             }
+            queue = allAssets.filter { mediaFilter.includes($0.type) }
             await seedStates(checkedIDs: checkedIDs)
             totalCount = queue.count
             phase = queue.isEmpty ? .finished : .active
@@ -169,12 +183,39 @@ final class CullSession {
         }
         guard let record = undoStack.popLast() else { return }
         reviewedCount -= 1
+        reviewedIDs.remove(record.asset.id)
         queue.insert(record.asset, at: 0)
         phase = .active
         // The record this button would have undone is gone, so `undoStack.last`
         // now points at an earlier, off-screen asset. Leaving Undo live would
         // silently revert something you aren't looking at.
         undoSuppressed = true
+        prefetchUpcoming()
+    }
+
+    /// Narrows or widens what the rest of the run offers.
+    ///
+    /// The queue is mutated in place rather than rebuilt from `allAssets`,
+    /// because its order carries information a rebuild would throw away: the
+    /// rotation `jump(to:)` established, and the head position `undo` inserts
+    /// at. Rebuilding would also resurrect assets `dropUnavailable` removed.
+    func setMediaFilter(_ filter: MediaTypeFilter) {
+        guard filter != mediaFilter else { return }
+        mediaFilter = filter
+
+        queue.removeAll { !filter.includes($0.type) }
+        let present = Set(queue.map(\.id))
+        // Appended, not merged in original order: anything already queued has a
+        // position that means something, and newly admitted assets have none.
+        queue += allAssets.filter { asset in
+            filter.includes(asset.type)
+                && !present.contains(asset.id)
+                && !reviewedIDs.contains(asset.id)
+                && !droppedIDs.contains(asset.id)
+        }
+
+        totalCount = reviewedCount + queue.count
+        phase = queue.isEmpty ? .finished : .active
         prefetchUpcoming()
     }
 
@@ -201,6 +242,8 @@ final class CullSession {
         guard queue.contains(where: { $0.id == asset.id }) else { return }
         queue.removeAll { $0.id == asset.id }
         assetStates.removeValue(forKey: asset.id)
+        // Remembered so a later filter change can't bring the ghost back.
+        droppedIDs.insert(asset.id)
         totalCount = max(reviewedCount, totalCount - 1)
         if queue.isEmpty {
             phase = .finished
@@ -215,6 +258,7 @@ final class CullSession {
         let idSet = Set(ids)
 
         queue.removeAll { idSet.contains($0.id) }
+        reviewedIDs.formUnion(idSet)
         reviewedCount += assets.count
         trashedCount += assets.count
         trashedAssets.append(contentsOf: assets)
@@ -255,6 +299,7 @@ final class CullSession {
         case .unfavorite: favoritedCount += 1
         }
         revertState(record.kind, to: record.asset.id)
+        reviewedIDs.remove(record.asset.id)
         queue.insert(record.asset, at: 0)
         stats?.revert(record.kind)
         phase = .active
@@ -343,6 +388,7 @@ final class CullSession {
         case .unfavorite: favoritedCount = max(0, favoritedCount - 1)
         }
         applyState(kind, to: asset.id)
+        reviewedIDs.insert(asset.id)
         undoStack.append(CullActionRecord(asset: asset, kind: kind))
         // Whatever was suppressing undo, acting again gives it a target.
         undoSuppressed = false
@@ -430,8 +476,16 @@ final class CullSession {
 
     /// After the run, optionally remove the trashed items from the iPhone's
     /// photo library. iOS shows its own confirmation for the batch.
+    ///
+    /// Runs at most once. It is driven by a `.task` on the summary screen, and
+    /// the summary is rebuilt every time the run enters `.finished` — which a
+    /// media filter narrow-then-widen can now do mid-session. Without the
+    /// guard, that would raise the iOS batch-delete confirmation partway
+    /// through a run, repeatedly.
     func deleteTrashedFromPhotosIfEnabled() async {
+        guard !didRunPhotoCleanup else { return }
         guard alsoDeleteFromPhotos, !trashedAssets.isEmpty else { return }
+        didRunPhotoCleanup = true
         guard await PhotoLibraryService.ensureAccess() else { return }
         let ids = await PhotoLibraryService.localIdentifiers(matching: trashedAssets)
         await PhotoLibraryService.deleteAssets(localIdentifiers: ids)
@@ -453,8 +507,7 @@ final class CullSession {
     /// cannot shift server-side pagination underneath us.
     private func fetchAllAssets() async throws -> [ImmichAsset] {
         try await client.fetchAssets(albumIDs: selection.albumIDs, tagIDs: nil,
-                                     order: order.apiValue, limit: Self.maxAssets,
-                                     type: mediaFilter.searchType)
+                                     order: order.apiValue, limit: Self.maxAssets)
     }
 
     /// Records what is already true of each queued asset, so the badges are
@@ -472,7 +525,7 @@ final class CullSession {
             albumMemberIDs = Set((members ?? []).map(\.id))
         }
 
-        assetStates = queue.reduce(into: [:]) { states, asset in
+        assetStates = allAssets.reduce(into: [:]) { states, asset in
             states[asset.id] = AssetCullState(
                 isFavorite: asset.isFavorite ?? false,
                 isInDestinationAlbum: albumMemberIDs.contains(asset.id),
