@@ -64,9 +64,25 @@ final class CullFlowTests: XCTestCase {
         app.swipeDown() // add to album
         XCTAssertTrue(app.staticTexts["4 of 5"].waitForExistence(timeout: 5))
 
-        // Undo the album add via right swipe, then redo it.
+        // Going back must not undo the album add: the badge has to survive it.
+        // Before, stepping back reverted the action and the badge vanished.
         app.swipeRight()
         XCTAssertTrue(app.staticTexts["3 of 5"].waitForExistence(timeout: 5))
+        XCTAssertTrue(inAlbumBadge(in: app).waitForExistence(timeout: 5),
+                      "Stepping back should leave the photo in the album")
+
+        // Swiping down again on a photo that is already in the album takes it
+        // back out, rather than adding it a second time.
+        app.swipeDown()
+        XCTAssertTrue(app.staticTexts["4 of 5"].waitForExistence(timeout: 5))
+        app.swipeRight()
+        XCTAssertTrue(app.staticTexts["3 of 5"].waitForExistence(timeout: 5))
+        // Only ever one photo touched the album, so no badge anywhere proves
+        // the removal landed rather than a second add.
+        XCTAssertFalse(inAlbumBadge(in: app).exists,
+                       "Swiping down again should have removed it from the album")
+
+        // Put it back so the counts below still line up.
         app.swipeDown()
         XCTAssertTrue(app.staticTexts["4 of 5"].waitForExistence(timeout: 5))
 
@@ -78,6 +94,93 @@ final class CullFlowTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["All done"].waitForExistence(timeout: 5))
         forceTap(app.buttons["Done"])
         XCTAssertTrue(testAlbumRow.waitForExistence(timeout: 5), "Should return to the album list")
+    }
+
+    /// Undo has to go inert right after a step back. The record it would have
+    /// undone is gone, so the stack's top refers to an earlier, off-screen
+    /// photo — leaving it live would revert something you can't see.
+    @MainActor
+    func testUndoIsDisabledAfterSteppingBack() throws {
+        resetMockServer()
+        let app = launchConnectedApp()
+
+        let testAlbumRow = albumRow(named: "Test Album", in: app)
+        XCTAssertTrue(testAlbumRow.waitForExistence(timeout: 15), "Album list should appear")
+        scrollUntilHittable(testAlbumRow, in: app)
+        forceTap(testAlbumRow)
+        forceTap(app.buttons["Cull 1 Album"])
+        XCTAssertTrue(app.staticTexts["1 of 5"].waitForExistence(timeout: 15), "First card should load")
+
+        let undo = app.buttons["Undo"]
+        XCTAssertFalse(undo.isEnabled, "Nothing has been done yet")
+
+        app.swipeDown() // add to album
+        XCTAssertTrue(app.staticTexts["2 of 5"].waitForExistence(timeout: 5))
+        XCTAssertTrue(undo.isEnabled, "The album add should be undoable")
+
+        app.swipeRight() // step back
+        XCTAssertTrue(app.staticTexts["1 of 5"].waitForExistence(timeout: 5))
+        XCTAssertFalse(undo.isEnabled, "Undo has no target after stepping back")
+
+        app.swipeDown() // acting again gives it one
+        XCTAssertTrue(app.staticTexts["2 of 5"].waitForExistence(timeout: 5))
+        XCTAssertTrue(undo.isEnabled, "Acting again should revive Undo")
+    }
+
+    /// The album you pick moves to the top of the list, directly under
+    /// "Entire Roll". Asserts position, not just that it is selected — a
+    /// selection check alone cannot tell a pinned row from an unmoved one.
+    @MainActor
+    func testSelectedAlbumMovesToTopOfList() throws {
+        resetMockServer()
+        let app = launchConnectedApp()
+
+        // Keepers is the older album, so review order (newest first) puts it
+        // second. Picking it has to override that.
+        let keepers = albumRow(named: "Keepers", in: app)
+        XCTAssertTrue(keepers.waitForExistence(timeout: 15), "Album list should appear")
+        let testAlbum = albumRow(named: "Test Album", in: app)
+        XCTAssertTrue(testAlbum.frame.minY < keepers.frame.minY,
+                      "Newest album should sort first before any selection")
+
+        scrollUntilHittable(keepers, in: app)
+        forceTap(keepers)
+
+        XCTAssertTrue(keepers.frame.minY < testAlbum.frame.minY,
+                      "The selected album should be pinned above the others")
+    }
+
+    // MARK: Helpers
+
+    /// Rows are matched on the combined button label; the inner StaticText
+    /// isn't hit-testable.
+    @MainActor
+    private func albumRow(named name: String, in app: XCUIApplication) -> XCUIElement {
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", name)).firstMatch
+    }
+
+    @MainActor
+    private func inAlbumBadge(in app: XCUIApplication) -> XCUIElement {
+        app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label CONTAINS 'In album'"))
+            .firstMatch
+    }
+
+    /// Connects to the mock and lands on the album list, absorbing the system
+    /// prompts that can otherwise swallow taps.
+    @MainActor
+    private func launchConnectedApp() -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchArguments = ["--uitest-reset"]
+        app.launchEnvironment = [
+            "UITEST_ALBUM_ID": "7122f33f-bc44-5ca3-95d4-19c7419cfee9",
+            "UITEST_ALBUM_NAME": "Keepers",
+            "UITEST_SERVER_URL": "http://127.0.0.1:2283",
+            "UITEST_API_KEY": "test-key",
+        ]
+        app.launch()
+        allowLocalNetworkPrompt(timeout: 5)
+        return app
     }
 
     /// Approves the Local Network system alert if it is on screen.
