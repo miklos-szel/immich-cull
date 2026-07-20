@@ -18,6 +18,10 @@ struct TrashBinView: View {
     @State private var actionError: String?
     @State private var isConfirmingDelete = false
     @State private var isConfirmingEmpty = false
+    /// Matching Immich assets to local photos walks the photo library, which
+    /// takes noticeable time on a big one. Without this the app looks frozen
+    /// and the iOS delete confirmation seems to arrive out of nowhere.
+    @State private var isSearchingPhotoLibrary = false
 
     var body: some View {
         NavigationStack {
@@ -115,6 +119,9 @@ struct TrashBinView: View {
 
     private var actionBar: some View {
         VStack(spacing: 8) {
+            if isSearchingPhotoLibrary {
+                PhotoLibrarySearchNoticeView()
+            }
             selectionActions
             // Outside the group above: emptying the bin doesn't need a selection.
             emptyTrashButton
@@ -229,20 +236,43 @@ struct TrashBinView: View {
         permanentlyDelete(assets)
     }
 
+    /// Removes the local copies *before* deleting on the server, not after.
+    ///
+    /// Between the two there is a window where the photo is on the phone but
+    /// no longer on the server — which is exactly the state that makes the
+    /// official Immich app's auto-backup upload it again, undoing the delete.
+    /// Doing the server side last keeps that window closed: once the server
+    /// record goes, there is nothing left locally to re-upload.
+    ///
+    /// Failing the local step doesn't abort the server delete — the user asked
+    /// for the photo gone — but it does warn, because that is the case where
+    /// backup can put it back.
     private func permanentlyDelete(_ toDelete: [ImmichAsset]) {
         let ids = Set(toDelete.map(\.id))
         Task {
             do {
+                var localCopiesRemain = false
+                if await PhotoLibraryService.ensureAccess() {
+                    isSearchingPhotoLibrary = true
+                    let localIDs = await PhotoLibraryService.localIdentifiers(matching: toDelete)
+                    isSearchingPhotoLibrary = false
+                    if !localIDs.isEmpty {
+                        localCopiesRemain = await PhotoLibraryService
+                            .deleteAssets(localIdentifiers: localIDs) == false
+                    }
+                }
+
                 try await client.permanentlyDeleteAssets(ids: Array(ids))
                 assets.removeAll { ids.contains($0.id) }
                 selectedIDs.subtract(ids)
                 onAssetsLeftTrash(ids)
-                // Permanent delete always removes the local copies too.
-                if await PhotoLibraryService.ensureAccess() {
-                    let localIDs = await PhotoLibraryService.localIdentifiers(matching: toDelete)
-                    await PhotoLibraryService.deleteAssets(localIdentifiers: localIDs)
+
+                if localCopiesRemain {
+                    actionError = String(localized: "Deleted from Immich, but the copies are still on this iPhone. If Immich's auto-backup is on, it may upload them again.")
+                    isShowingActionError = true
                 }
             } catch {
+                isSearchingPhotoLibrary = false
                 actionError = error.localizedDescription
                 isShowingActionError = true
             }
