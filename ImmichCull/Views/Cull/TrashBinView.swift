@@ -260,6 +260,11 @@ struct TrashBinView: View {
                         localCopiesRemain = await PhotoLibraryService
                             .deleteAssets(localIdentifiers: localIDs) == false
                     }
+                } else {
+                    // Without library access we cannot even look, let alone
+                    // delete — which is precisely the case where backup
+                    // silently restores what was just deleted.
+                    localCopiesRemain = true
                 }
 
                 try await client.permanentlyDeleteAssets(ids: Array(ids))

@@ -8,20 +8,36 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT_DIR="$REPO_ROOT/docs/screenshots"
-RESULT_BUNDLE="$(mktemp -d)/screenshots.xcresult"
+WORK_DIR="$(mktemp -d)"
+RESULT_BUNDLE="$WORK_DIR/screenshots.xcresult"
 
 cleanup() {
     [[ -n "${MOCK_PID:-}" ]] && kill "$MOCK_PID" 2>/dev/null || true
+    # Result bundles are large; don't leave one in /tmp per run.
+    rm -rf "$WORK_DIR"
 }
 trap cleanup EXIT
 
 echo "Starting the mock server…"
 MOCK_PHOTO_STYLE=gradient python3 "$REPO_ROOT/scratchpad/mock_immich.py" >/dev/null 2>&1 &
 MOCK_PID=$!
+server_ready=false
 for _ in {1..10}; do
-    curl -sf -m 2 http://127.0.0.1:2283/api/server/ping >/dev/null && break
+    if curl -sf -m 2 http://127.0.0.1:2283/api/server/ping >/dev/null; then
+        server_ready=true
+        break
+    fi
     sleep 1
 done
+if [[ "$server_ready" != true ]]; then
+    # Otherwise xcodebuild runs against a dead server and the failure surfaces
+    # as an inscrutable UI-test timeout.
+    echo "Mock server did not come up on 127.0.0.1:2283." >&2
+    exit 1
+fi
+
+# Stale images would otherwise survive a run that captures fewer screens.
+rm -rf "$OUT_DIR"
 
 echo "Running the capture test…"
 # xcodebuild forwards TEST_RUNNER_-prefixed vars from its own environment into

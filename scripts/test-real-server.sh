@@ -26,9 +26,13 @@ set +a
 export TEST_RUNNER_REAL_SERVER_URL="$REAL_SERVER_URL"
 export TEST_RUNNER_REAL_SERVER_API_KEY="$REAL_SERVER_API_KEY"
 
+# Pinned by default to match the rest of the project's docs, but overridable —
+# not everyone has this exact simulator installed.
+DESTINATION="${DESTINATION:-platform=iOS Simulator,name=iPhone 17,OS=26.2}"
+
 exec xcodebuild test \
     -project "$REPO_ROOT/ImmichCull.xcodeproj" \
     -scheme ImmichCull \
-    -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.2' \
+    -destination "$DESTINATION" \
     -only-testing:ImmichCullUITests/RealServerSmokeTests \
     "$@"
