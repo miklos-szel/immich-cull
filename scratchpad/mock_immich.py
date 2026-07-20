@@ -5,6 +5,7 @@ Serves on 127.0.0.1:2283. API key: "test-key".
 Logs every mutating call to mock_immich.log (JSON lines) for post-run assertions.
 """
 import json
+import os
 import struct
 import sys
 import uuid
@@ -23,11 +24,34 @@ COLORS = [
     (170, 90, 210), (240, 130, 50), (70, 200, 190), (150, 150, 150),
 ]
 
+# Screenshots for the README are taken against this mock so no real photo is
+# ever involved. Flat colour blocks look nothing like a photo app, so this mode
+# renders soft gradients instead — they read as heavily blurred photographs
+# while being entirely generated. Off by default: the blur finder's fixtures
+# depend on flat images being sharp.
+PHOTO_STYLE = os.environ.get("MOCK_PHOTO_STYLE", "flat")
+
+
 def png(color, width=400, height=500):
     def chunk(tag, data):
         payload = tag + data
         return struct.pack(">I", len(data)) + payload + struct.pack(">I", zlib.crc32(payload))
-    raw = b"".join(b"\x00" + bytes(color) * width for _ in range(height))
+
+    if PHOTO_STYLE == "gradient":
+        rows = []
+        for y in range(height):
+            v = y / max(height - 1, 1)
+            row = bytearray(b"\x00")
+            for x in range(width):
+                h = x / max(width - 1, 1)
+                # Two overlapping ramps, so the result has a diagonal falloff
+                # rather than looking like a colour bar.
+                shade = 0.55 + 0.45 * (1 - v) * (0.35 + 0.65 * h)
+                row += bytes(min(255, int(c * shade)) for c in color)
+            rows.append(bytes(row))
+        raw = b"".join(rows)
+    else:
+        raw = b"".join(b"\x00" + bytes(color) * width for _ in range(height))
     return (b"\x89PNG\r\n\x1a\n"
             + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
             + chunk(b"IDAT", zlib.compress(raw))
