@@ -535,7 +535,8 @@ final class CullSession {
     private func fetchAllAssets() async throws -> [ImmichAsset] {
         try await client.fetchAssets(albumIDs: selection.albumIDs, tagIDs: nil,
                                      order: order.apiValue, limit: Self.maxAssets,
-                                     isNotInAlbum: selection.isNotInAlbum ? true : nil)
+                                     isNotInAlbum: selection.isNotInAlbum ? true : nil,
+                                     visibility: "timeline")
     }
 
     /// Records what is already true of each queued asset, so the badges are

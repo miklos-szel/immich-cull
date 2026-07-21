@@ -208,7 +208,8 @@ struct AlbumStreamView: View {
         do {
             allAssets = try await client.fetchAssets(
                 albumIDs: selection.albumIDs, tagIDs: nil, order: "desc",
-                limit: Self.maxAssets, isNotInAlbum: selection.isNotInAlbum ? true : nil
+                limit: Self.maxAssets, isNotInAlbum: selection.isNotInAlbum ? true : nil,
+                visibility: "timeline"
             )
         } catch {
             loadError = error.localizedDescription
