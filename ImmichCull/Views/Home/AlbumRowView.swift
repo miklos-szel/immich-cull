@@ -2,13 +2,13 @@ import SwiftUI
 
 struct AlbumRowView: View {
     let album: ImmichAlbum
-    let isSelected: Bool
     let thumbnailURL: URL?
     let apiKey: String
-    let toggle: () -> Void
+    /// Tapping an album opens its full-screen stream rather than selecting it.
+    let open: () -> Void
 
     var body: some View {
-        Button(action: toggle) {
+        Button(action: open) {
             HStack(spacing: 12) {
                 thumbnail
                 VStack(alignment: .leading) {
@@ -19,13 +19,12 @@ struct AlbumRowView: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                    .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
-                    .imageScale(.large)
+                Image(systemName: "chevron.right")
+                    .foregroundStyle(.tertiary)
+                    .font(.footnote.weight(.semibold))
                     .accessibilityHidden(true)
             }
         }
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
     private var thumbnail: some View {

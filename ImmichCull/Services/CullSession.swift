@@ -227,6 +227,13 @@ final class CullSession {
         prefetchUpcoming()
     }
 
+    /// Same as `jump(to:)` but by ID — used to open the deck already positioned
+    /// on the photo tapped in a grid.
+    func jump(toID id: String) {
+        guard let asset = queue.first(where: { $0.id == id }) else { return }
+        jump(to: asset)
+    }
+
     /// Called when a card's image can't be loaded. Confirms with the server
     /// before discarding anything: assets whose preview simply hasn't been
     /// generated must stay reviewable, only genuinely deleted ones are dropped.
@@ -272,10 +279,13 @@ final class CullSession {
         }
         prefetchUpcoming()
 
+        // Keyed on the visible still IDs, but the server call also carries any
+        // paired Live Photo movies so they're trashed together.
+        let serverIDs = assets.idsIncludingLivePhotoPairs
         enqueueBulk(ids) { [weak self] in
             guard let self else { return }
             do {
-                try await client.trashAssets(ids: ids)
+                try await client.trashAssets(ids: serverIDs)
             } catch {
                 errorMessage = error.localizedDescription
             }
@@ -412,7 +422,8 @@ final class CullSession {
         do {
             switch kind {
             case .trash:
-                try await client.trashAssets(ids: [asset.id])
+                // Live Photo: the paired .mov goes to the trash with the still.
+                try await client.trashAssets(ids: asset.idsIncludingLivePhotoPair)
             case .skip:
                 try await markChecked(asset)
             case .saveToAlbum:
@@ -438,7 +449,8 @@ final class CullSession {
         do {
             switch record.kind {
             case .trash:
-                try await client.restoreAssets(ids: [record.asset.id])
+                // Restore the paired Live Photo movie alongside the still.
+                try await client.restoreAssets(ids: record.asset.idsIncludingLivePhotoPair)
             case .skip:
                 try await unmarkCheckedIfNewlyChecked(record)
             case .saveToAlbum:
@@ -522,7 +534,8 @@ final class CullSession {
     /// cannot shift server-side pagination underneath us.
     private func fetchAllAssets() async throws -> [ImmichAsset] {
         try await client.fetchAssets(albumIDs: selection.albumIDs, tagIDs: nil,
-                                     order: order.apiValue, limit: Self.maxAssets)
+                                     order: order.apiValue, limit: Self.maxAssets,
+                                     isNotInAlbum: selection.isNotInAlbum ? true : nil)
     }
 
     /// Records what is already true of each queued asset, so the badges are

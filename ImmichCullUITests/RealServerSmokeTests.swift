@@ -27,6 +27,18 @@ final class RealServerSmokeTests: XCTestCase {
         return app
     }
 
+    /// Home rows open a browse grid; culling launches from inside it. Opens the
+    /// Entire Roll grid and starts the deck.
+    @MainActor
+    private func cullEntireRoll(_ app: XCUIApplication) {
+        let entireRoll = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Entire Roll'")).firstMatch
+        XCTAssertTrue(entireRoll.waitForExistence(timeout: 20), "Should land on Home when preconfigured")
+        forceTap(entireRoll)
+        XCTAssertTrue(app.buttons.matching(identifier: "gridCell").firstMatch.waitForExistence(timeout: 60),
+                      "Entire roll grid should load from the real server")
+        forceTap(app.buttons["albumStreamCull"])
+    }
+
     /// Home screen: albums load from the real server, including non-ASCII names.
     @MainActor
     func testHomeListsRealAlbums() throws {
@@ -46,9 +58,7 @@ final class RealServerSmokeTests: XCTestCase {
     func testTrashAndRestoreRoundTrip() throws {
         let app = try launchConnectedApp()
 
-        let cullAll = app.buttons["Cull Entire Roll"]
-        XCTAssertTrue(cullAll.waitForExistence(timeout: 20), "Should land on Home when preconfigured")
-        forceTap(cullAll)
+        cullEntireRoll(app)
 
         let firstCard = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH '1 of'")).firstMatch
         XCTAssertTrue(firstCard.waitForExistence(timeout: 60), "First card should load from the real server")
@@ -109,9 +119,7 @@ final class RealServerSmokeTests: XCTestCase {
     func testNextAndPreviousImage() throws {
         let app = try launchConnectedApp()
 
-        let cullAll = app.buttons["Cull Entire Roll"]
-        XCTAssertTrue(cullAll.waitForExistence(timeout: 20))
-        forceTap(cullAll)
+        cullEntireRoll(app)
 
         let firstCard = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH '1 of'")).firstMatch
         XCTAssertTrue(firstCard.waitForExistence(timeout: 60), "First card should load")

@@ -43,8 +43,9 @@ struct ImmichClient: Sendable {
 
     func searchAssets(page: Int, size: Int, order: String, albumIDs: [String]?, tagIDs: [String]?,
                       trashedAfter: String? = nil, withDeleted: Bool? = nil,
-                      type: String? = nil) async throws -> SearchResult {
-        let body = SearchRequest(albumIds: albumIDs, order: order, page: page, size: size, tagIds: tagIDs,
+                      type: String? = nil, isNotInAlbum: Bool? = nil) async throws -> SearchResult {
+        let body = SearchRequest(albumIds: albumIDs, isNotInAlbum: isNotInAlbum, order: order,
+                                 page: page, size: size, tagIds: tagIDs,
                                  trashedAfter: trashedAfter, type: type,
                                  withDeleted: withDeleted, withExif: true)
         return try await decode(send("POST", "search/metadata", body: body))
@@ -68,19 +69,37 @@ struct ImmichClient: Sendable {
 
     /// Pages through metadata search until exhausted or `limit` is reached.
     func fetchAssets(albumIDs: [String]?, tagIDs: [String]?, order: String, limit: Int,
-                     type: String? = nil) async throws -> [ImmichAsset] {
+                     type: String? = nil, isNotInAlbum: Bool? = nil) async throws -> [ImmichAsset] {
         var assets: [ImmichAsset] = []
         var page = 1
         while assets.count < limit {
             let size = min(250, limit - assets.count)
             let result = try await searchAssets(page: page, size: size, order: order, albumIDs: albumIDs,
-                                                tagIDs: tagIDs, type: type)
+                                                tagIDs: tagIDs, type: type, isNotInAlbum: isNotInAlbum)
             assets += result.assets.items.prefix(limit - assets.count)
             guard assets.count < limit,
                   let next = result.assets.nextPage, let nextPage = Int(next) else { break }
             page = nextPage
         }
         return assets
+    }
+
+    /// IDs of every asset carrying any of the named tags — used to badge photos
+    /// that were already culled in a browse grid. Unknown names are skipped.
+    func assetIDs(withAnyTagNamed names: [String]) async throws -> Set<String> {
+        guard !names.isEmpty else { return [] }
+        let tagIDs = try await tags().filter { names.contains($0.name) }.map(\.id)
+        guard !tagIDs.isEmpty else { return [] }
+        return try await withThrowingTaskGroup(of: [ImmichAsset].self) { group in
+            for tagID in tagIDs {
+                group.addTask {
+                    try await fetchAssets(albumIDs: nil, tagIDs: [tagID], order: "desc", limit: .max)
+                }
+            }
+            var result: Set<String> = []
+            for try await assets in group { result.formUnion(assets.map(\.id)) }
+            return result
+        }
     }
 
     func duplicates() async throws -> [DuplicateGroup] {
@@ -236,6 +255,8 @@ struct ImmichClient: Sendable {
     }
     private struct SearchRequest: Encodable {
         let albumIds: [String]?
+        /// `true` restricts the search to assets in no album; omitted otherwise.
+        let isNotInAlbum: Bool?
         let order: String
         let page: Int
         let size: Int

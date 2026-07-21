@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Photos-app style "paint" selection: press and hold a cell, then slide the
 /// finger to extend the selection to everything between that cell and the one
@@ -49,28 +50,97 @@ extension View {
     ///     gesture selects or deselects.
     ///   - onPaint: called for each cell entering or leaving the dragged range,
     ///     with the state that cell should take.
+    ///   - autoScroll: when `true`, holding the finger against the top or bottom
+    ///     edge scrolls the container and keeps painting the rows that come into
+    ///     view — the Photos behaviour. Off by default so the paged grids, which
+    ///     have nothing to scroll, are untouched.
     func dragSelection(
         ids: [String],
         isEnabled: Bool = true,
+        autoScroll: Bool = false,
         isSelected: @escaping (String) -> Bool,
         onPaint: @escaping (String, Bool) -> Void
     ) -> some View {
         modifier(DragSelectionModifier(
             ids: ids,
             isEnabled: isEnabled,
+            autoScroll: autoScroll,
             isSelected: isSelected,
             onPaint: onPaint
         ))
     }
 }
 
+/// Height of the scrollable container, so the modifier knows where its top and
+/// bottom edges are for the auto-scroll bands.
+private struct DragContainerHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat { 0 }
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
+/// Drives edge auto-scroll off a display link. Not actor-isolated on purpose:
+/// `CADisplayLink` fires on the main run loop, so every access here is already
+/// on the main thread, and staying a plain `NSObject` avoids `@objc`/isolation
+/// friction on the selector.
+final class DragAutoScroller: NSObject {
+    weak var scrollView: UIScrollView?
+    /// Called after each scroll step so the caller can re-paint at the last
+    /// finger location against the rows that just came into view.
+    var onScroll: (() -> Void)?
+
+    /// Points per frame; positive scrolls down, negative up, zero stops.
+    private var velocity: CGFloat = 0
+    private var link: CADisplayLink?
+
+    func setVelocity(_ newValue: CGFloat) {
+        velocity = newValue
+        if newValue == 0 {
+            stop()
+        } else if link == nil {
+            let link = CADisplayLink(target: self, selector: #selector(step))
+            link.add(to: .main, forMode: .common)
+            self.link = link
+        }
+    }
+
+    func stop() {
+        velocity = 0
+        link?.invalidate()
+        link = nil
+    }
+
+    @objc private func step() {
+        guard let scrollView, velocity != 0 else { return }
+        let minY = -scrollView.adjustedContentInset.top
+        let maxY = max(minY, scrollView.contentSize.height - scrollView.bounds.height
+                       + scrollView.adjustedContentInset.bottom)
+        let target = min(max(minY, scrollView.contentOffset.y + velocity), maxY)
+        guard target != scrollView.contentOffset.y else { return }
+        scrollView.contentOffset.y = target
+        onScroll?()
+    }
+}
+
 private struct DragSelectionModifier: ViewModifier {
     let ids: [String]
     let isEnabled: Bool
+    let autoScroll: Bool
     let isSelected: (String) -> Bool
     let onPaint: (String, Bool) -> Void
 
+    /// Distance from an edge at which auto-scroll kicks in, and the top speed
+    /// (points per frame) reached at the very edge.
+    private static let edgeBand: CGFloat = 90
+    private static let maxSpeed: CGFloat = 14
+
     @State private var frames: [String: CGRect] = [:]
+    @State private var containerHeight: CGFloat = 0
+    /// Last finger location, in the container's coordinate space, so a display
+    /// link tick can re-paint there while the finger holds still at an edge.
+    @State private var lastLocation: CGPoint = .zero
+    @State private var scroller = DragAutoScroller()
     /// Whether this drag is selecting or deselecting — decided by the cell the
     /// press landed on, then applied to the whole range behind it.
     @State private var paintMode: Bool?
@@ -92,8 +162,29 @@ private struct DragSelectionModifier: ViewModifier {
             // the touch away from the scroll view instead.
             .coordinateSpace(name: DragSelection.coordinateSpace)
             // Pins the grid for the duration of a paint drag. This is what
-            // `.scrollDisabled` could not do — see ScrollPanDisabler.
-            .background { ScrollPanDisabler(isPaused: isPainting) }
+            // `.scrollDisabled` could not do — see ScrollPanDisabler. When
+            // auto-scroll is on, it also hands us the scroll view to drive.
+            .background {
+                ScrollPanDisabler(isPaused: isPainting) { scrollView in
+                    if autoScroll { scroller.scrollView = scrollView }
+                }
+            }
+            // The container's own size, for locating the auto-scroll edge bands.
+            .background {
+                GeometryReader { proxy in
+                    Color.clear.preference(key: DragContainerHeightKey.self, value: proxy.size.height)
+                }
+            }
+            .onPreferenceChange(DragContainerHeightKey.self) { containerHeight = $0 }
+            .onAppear {
+                // Re-paint at the held location as new rows scroll under it.
+                scroller.onScroll = { extendSelection(to: lastLocation) }
+            }
+            .onDisappear {
+                // The display link outlives the view otherwise — `onEnded` isn't
+                // guaranteed to fire if the drag is interrupted by dismissal.
+                scroller.stop()
+            }
             .onPreferenceChange(DragSelectionFrameKey.self) { frames = $0 }
             // Stays `simultaneousGesture` so taps still reach the cells' own
             // buttons; `highPriorityGesture` would pin the grid too, but it
@@ -115,7 +206,9 @@ private struct DragSelectionModifier: ViewModifier {
                 guard case .second(_, let drag) = value else { return }
                 isPainting = true
                 if let drag {
+                    lastLocation = drag.location
                     extendSelection(to: drag.location)
+                    updateAutoScroll(for: drag.location)
                 }
             }
             .onEnded { value in
@@ -123,6 +216,7 @@ private struct DragSelectionModifier: ViewModifier {
                 if case .second(_, let drag?) = value {
                     extendSelection(to: drag.location)
                 }
+                scroller.stop()
                 isPainting = false
                 paintMode = nil
                 anchorIndex = nil
@@ -168,6 +262,23 @@ private struct DragSelectionModifier: ViewModifier {
         for i in range {
             onPaint(ids[i], mode)
         }
+    }
+
+    /// Sets the auto-scroll speed from how deep the finger is into the top or
+    /// bottom edge band. Zero (and stop) anywhere in the middle.
+    private func updateAutoScroll(for location: CGPoint) {
+        guard autoScroll, containerHeight > 0 else { return }
+        let band = Self.edgeBand
+        let velocity: CGFloat
+        if location.y < band {
+            // Deeper past the edge → faster; ramps 0…1 across the band.
+            velocity = -Self.maxSpeed * min(1, (band - location.y) / band)
+        } else if location.y > containerHeight - band {
+            velocity = Self.maxSpeed * min(1, (location.y - (containerHeight - band)) / band)
+        } else {
+            velocity = 0
+        }
+        scroller.setVelocity(velocity)
     }
 
     /// Nearest cell centre rather than `contains`. A point in the gap between

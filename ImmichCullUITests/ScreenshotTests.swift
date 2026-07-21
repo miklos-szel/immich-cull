@@ -32,13 +32,16 @@ final class ScreenshotTests: XCTestCase {
             .matching(NSPredicate(format: "label BEGINSWITH 'Test Album'")).firstMatch
         XCTAssertTrue(testAlbumRow.waitForExistence(timeout: 15), "Album list should appear")
         scrollUntilHittable(testAlbumRow, in: app)
-        forceTap(testAlbumRow)
         capture(app, named: "01-albums")
+        // Tapping the album opens its stream; "Cull" starts the deck.
+        forceTap(testAlbumRow)
 
         // 2. The deck, with a photo already favourited and filed so the badges
         //    are visible — the screenshot should show the feature, not an
         //    untouched library.
-        forceTap(app.buttons["Cull 1 Album"])
+        XCTAssertTrue(app.buttons.matching(identifier: "gridCell").firstMatch.waitForExistence(timeout: 15),
+                      "Album stream should load")
+        forceTap(app.buttons["albumStreamCull"])
         XCTAssertTrue(app.staticTexts["1 of 5"].waitForExistence(timeout: 15), "First card should load")
         app.swipeDown()
         XCTAssertTrue(app.staticTexts["2 of 5"].waitForExistence(timeout: 5))

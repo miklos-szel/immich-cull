@@ -21,6 +21,18 @@ final class CleanupFlowTests: XCTestCase {
         app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Move'")).firstMatch
     }
 
+    /// Home rows now open a browse grid; culling launches from inside it. Opens
+    /// the Entire Roll grid and starts the deck.
+    @MainActor
+    private func cullEntireRoll(_ app: XCUIApplication) {
+        let entireRoll = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Entire Roll'")).firstMatch
+        XCTAssertTrue(entireRoll.waitForExistence(timeout: 15), "Home should list Entire Roll")
+        forceTap(entireRoll)
+        XCTAssertTrue(app.buttons.matching(identifier: "gridCell").firstMatch.waitForExistence(timeout: 15),
+                      "Entire roll grid should load")
+        forceTap(app.buttons["albumStreamCull"])
+    }
+
     @MainActor
     func testBlurryScanFindsCandidates() throws {
         try XCTSkipIf(true, "Blurry finder temporarily hidden from Home; code path retained.")
@@ -64,7 +76,7 @@ final class CleanupFlowTests: XCTestCase {
     @MainActor
     func testTrashBinRestore() throws {
         let app = launchConnectedApp()
-        forceTap(app.buttons["Cull Entire Roll"])
+        cullEntireRoll(app)
 
         let progress = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH '1 of'")).firstMatch
         XCTAssertTrue(progress.waitForExistence(timeout: 15), "First card should load")
@@ -91,7 +103,7 @@ final class CleanupFlowTests: XCTestCase {
     @MainActor
     func testTrashBinPermanentDelete() throws {
         let app = launchConnectedApp()
-        forceTap(app.buttons["Cull Entire Roll"])
+        cullEntireRoll(app)
 
         let progress = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH '1 of'")).firstMatch
         XCTAssertTrue(progress.waitForExistence(timeout: 15), "First card should load")
@@ -125,7 +137,7 @@ final class CleanupFlowTests: XCTestCase {
     @MainActor
     func testDeletedAssetIsSkippedButNoPreviewAssetSurvives() throws {
         let app = launchConnectedApp()
-        forceTap(app.buttons["Cull Entire Roll"])
+        cullEntireRoll(app)
 
         // 8 assets in the fixture, one of them a ghost: the deck must settle
         // on 7 once it has confirmed the ghost is gone.
@@ -144,27 +156,23 @@ final class CleanupFlowTests: XCTestCase {
         XCTAssertTrue(testAlbum.waitForExistence(timeout: 15), "Album list should load")
         XCTAssertEqual(testAlbum.label, "Test Album, 5 items", "Fixture starts with five")
 
-        // Cull just that album and bin one photo.
+        // Open the album's stream, then cull it and bin one photo.
         forceTap(testAlbum)
-        forceTap(app.buttons["Cull 1 Album"])
+        XCTAssertTrue(app.buttons.matching(identifier: "gridCell").firstMatch.waitForExistence(timeout: 15),
+                      "Album stream should load its assets")
+        forceTap(app.buttons["albumStreamCull"])
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH '1 of'")).firstMatch
             .waitForExistence(timeout: 15), "First card should load")
         app.swipeUp()
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH '2 of'")).firstMatch
             .waitForExistence(timeout: 10), "Should advance after trashing")
 
-        // Returning to the main menu must show the new count.
-        forceTap(app.buttons["Close"])
+        // Close the deck; the grid was dismissed when culling started, so this
+        // lands back on the album list, which must show the new count.
+        forceTap(app.buttons["Close"]) // deck → album list
         let updated = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Test Album'")).firstMatch
         XCTAssertTrue(updated.waitForExistence(timeout: 15), "Back on the album list")
         waitForLabel(updated, matching: "label == 'Test Album, 4 items'")
-
-        // The album must still be the (single) selection. Selection used to be
-        // keyed by value, so a changed count stranded the old entry and the
-        // start button reported two albums with one ticked.
-        XCTAssertTrue(updated.isSelected, "Selection should survive the count changing")
-        XCTAssertTrue(app.buttons["Cull 1 Album"].waitForExistence(timeout: 10),
-                      "Should still be culling exactly one album")
     }
 
     /// The album title opens a grid: tapping a photo continues from it, and
@@ -172,22 +180,22 @@ final class CleanupFlowTests: XCTestCase {
     @MainActor
     func testGridJumpAndBulkTrash() throws {
         let app = launchConnectedApp()
-        forceTap(app.buttons["Cull Entire Roll"])
+        cullEntireRoll(app)
 
         let firstCard = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH '1 of'")).firstMatch
         XCTAssertTrue(firstCard.waitForExistence(timeout: 15), "First card should load")
 
-        // Jump: pick the third thumbnail and continue from it.
+        // Jump: select the third thumbnail, then continue the run from it.
         forceTap(app.buttons["albumTitleButton"])
         let cells = app.buttons.matching(identifier: "gridCell")
         XCTAssertTrue(cells.element(boundBy: 2).waitForExistence(timeout: 10), "Grid should list the queue")
         forceTap(cells.element(boundBy: 2))
+        forceTap(app.buttons["Continue Here"])
         XCTAssertTrue(firstCard.waitForExistence(timeout: 10),
                       "Jumping keeps the progress at the first unreviewed card")
 
-        // Bulk trash: select two photos from the grid and bin them.
+        // Bulk trash: a plain body tap now selects — pick two photos and bin them.
         forceTap(app.buttons["albumTitleButton"])
-        forceTap(app.buttons["Select"])
         forceTap(cells.element(boundBy: 0))
         forceTap(cells.element(boundBy: 1))
         let trash = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Move 2'")).firstMatch
@@ -208,7 +216,7 @@ final class CleanupFlowTests: XCTestCase {
     @MainActor
     func testGridDragSelectsAcrossCells() throws {
         let app = launchConnectedApp()
-        forceTap(app.buttons["Cull Entire Roll"])
+        cullEntireRoll(app)
 
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH '1 of'")).firstMatch
             .waitForExistence(timeout: 15), "First card should load")
@@ -235,17 +243,12 @@ final class CleanupFlowTests: XCTestCase {
     }
 
     /// Dragging onto another row fills the range, Photos-style: from cell 0 to
-    /// cell 3 takes the rest of row one with it, for four in total.
-    ///
-    /// Dragging onto another row fills the range, Photos-style: from cell 0 to
-    /// cell 3 takes the rest of row one with it, for four in total.
-    ///
-    /// The grid is a fixed page, so nothing can move under the finger while
-    /// this runs — that's the property being guarded.
+    /// cell 3 takes the rest of row one with it, for four in total. Cells 0 and 3
+    /// sit well clear of the auto-scroll edge bands, so the grid stays put.
     @MainActor
     func testDragOntoAnotherRowSelectsTheWholeRange() throws {
         let app = launchConnectedApp()
-        forceTap(app.buttons["Cull Entire Roll"])
+        cullEntireRoll(app)
 
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH '1 of'")).firstMatch
             .waitForExistence(timeout: 15), "First card should load")
@@ -274,7 +277,7 @@ final class CleanupFlowTests: XCTestCase {
     @MainActor
     func testEmptyTrash() throws {
         let app = launchConnectedApp()
-        forceTap(app.buttons["Cull Entire Roll"])
+        cullEntireRoll(app)
 
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH '1 of'")).firstMatch
             .waitForExistence(timeout: 15), "First card should load")

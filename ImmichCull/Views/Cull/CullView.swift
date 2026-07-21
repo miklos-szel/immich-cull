@@ -7,6 +7,9 @@ struct CullView: View {
     @Environment(\.dismiss) private var dismiss
 
     let selection: AlbumSelection
+    /// When set, the deck opens already positioned on this photo — used when a
+    /// grid cell's cull icon launches the run from a specific image.
+    var startAssetID: String?
 
     @State private var session: CullSession?
     @State private var isShowingTrashBin = false
@@ -115,6 +118,9 @@ struct CullView: View {
         let newSession = CullSession(settings: settings, client: client, selection: selection, stats: stats)
         session = newSession
         await newSession.start()
+        if let startAssetID {
+            newSession.jump(toID: startAssetID)
+        }
     }
 
     private func retry() {
