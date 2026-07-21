@@ -12,12 +12,13 @@ struct VideoCardView: View {
     @State private var looper: AVPlayerLooper?
 
     var body: some View {
+        // No placeholder: the card underneath already shows the poster still, and
+        // the player layer is transparent until it has frames, so there's nothing
+        // to flash between them.
         ZStack {
             if let player {
                 PlayerLayerView(player: player)
                     .allowsHitTesting(false) // Let the card's drag gesture win.
-            } else {
-                ProgressView()
             }
         }
         .task { setUpPlayer() }

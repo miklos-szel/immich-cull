@@ -1,8 +1,8 @@
 import SwiftUI
 
 /// Thumbnail overview of everything still to review, opened from the title on
-/// the cull screen. Tap a photo to continue from it, or switch to selection
-/// mode to trash several at once.
+/// the cull screen. A continuous lazy grid (no paging): tap the cull icon on a
+/// photo to continue the run from it, or press-and-drag to trash several at once.
 struct CullGridView: View {
     let session: CullSession
     let client: ImmichClient
@@ -10,12 +10,25 @@ struct CullGridView: View {
 
     @Environment(\.dismiss) private var dismiss
 
-    @State private var isSelecting = false
     @State private var selectedIDs: Set<String> = []
     @State private var isConfirmingTrash = false
-    @State private var pageIndex = 0
 
-    private static let hintHeight: CGFloat = 20
+    /// A stable display order for the overview. The live queue is rotated by
+    /// `jump(to:)`, so reading it directly reshuffles the grid every time you dip
+    /// into a photo and come back. Sorting by capture date (newest first — the
+    /// fetch order), with an ID tiebreaker so equal dates can't swap, keeps it put
+    /// without touching the queue the session actually culls from.
+    private var orderedAssets: [ImmichAsset] {
+        session.queue.sorted {
+            let a = $0.takenAt ?? .distantPast
+            let b = $1.takenAt ?? .distantPast
+            return a != b ? a > b : $0.id < $1.id
+        }
+    }
+
+    private var allSelected: Bool {
+        !orderedAssets.isEmpty && selectedIDs.count == orderedAssets.count
+    }
 
     var body: some View {
         NavigationStack {
@@ -36,74 +49,58 @@ struct CullGridView: View {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Done", action: dismiss.callAsFunction)
                 }
-                if !session.queue.isEmpty {
+                if !orderedAssets.isEmpty {
                     ToolbarItem(placement: .topBarTrailing) {
-                        Button(isSelecting ? "Cancel" : "Select", action: toggleSelectionMode)
+                        // Select exactly one photo to continue the run from it.
+                        Button("Continue Here", systemImage: "play.rectangle", action: continueFromSelection)
+                            .disabled(selectedIDs.count != 1)
+                    }
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button(allSelected ? "Deselect All" : "Select All", action: toggleSelectAll)
                     }
                 }
             }
             .safeAreaInset(edge: .bottom) {
-                if isSelecting {
+                if !selectedIDs.isEmpty {
                     trashButton
                 }
             }
         }
     }
 
-    /// Paged, not scrolled. A static page gives a selection drag no scroll view
-    /// to wrestle for the touch, so nothing slides out from under the finger —
-    /// which is what made drag-select unreliable while this was a `ScrollView`.
     private var grid: some View {
-        GeometryReader { geometry in
-            let pages = pages(fitting: geometry.size)
-            VStack(spacing: 4) {
-                hint(pageCount: pages.count)
-                    .frame(height: Self.hintHeight)
-                TabView(selection: $pageIndex) {
-                    ForEach(Array(pages.enumerated()), id: \.offset) { index, assets in
-                        CullGridPageView(
-                            assets: assets,
-                            selectedIDs: selectedIDs,
-                            columns: CullGridMetrics.columns,
-                            client: client,
-                            stateFor: session.state(for:),
-                            onTap: handleTap
-                        )
-                        .tag(index)
-                    }
+        ScrollView {
+            hint
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: 3), spacing: 4) {
+                ForEach(orderedAssets) { asset in
+                    CleanupGridCellView(
+                        asset: asset,
+                        isSelected: selectedIDs.contains(asset.id),
+                        caption: nil,
+                        state: session.state(for: asset),
+                        client: client,
+                        toggle: { toggleSelect(asset) }
+                    )
+                    .dragSelectCell(id: asset.id)
                 }
-                .tabViewStyle(.page(indexDisplayMode: .never))
-                .dragSelection(
-                    ids: session.queue.map(\.id),
-                    isSelected: { selectedIDs.contains($0) },
-                    onPaint: setSelected
-                )
             }
+            .padding(.horizontal, 4)
         }
+        .dragSelection(
+            ids: orderedAssets.map(\.id),
+            autoScroll: true,
+            isSelected: { selectedIDs.contains($0) },
+            onPaint: setSelected
+        )
     }
 
-    private func hint(pageCount: Int) -> some View {
-        HStack {
-            Text(isSelecting
-                 ? "Press and drag to select. Swipe sideways for more."
-                 : "Tap a photo to continue culling from it.")
-            Spacer()
-            if pageCount > 1 {
-                Text("\(pageIndex + 1) / \(pageCount)").monospacedDigit()
-            }
-        }
-        .font(.footnote)
-        .foregroundStyle(.secondary)
-        .padding(.horizontal, 8)
-    }
-
-    private func pages(fitting size: CGSize) -> [[ImmichAsset]] {
-        let available = CGSize(width: size.width, height: size.height - Self.hintHeight)
-        let pageSize = CullGridMetrics.pageSize(fitting: available)
-        let queue = session.queue
-        return stride(from: 0, to: queue.count, by: pageSize).map {
-            Array(queue[$0..<min($0 + pageSize, queue.count)])
-        }
+    private var hint: Text {
+        Text("Press and drag to select. Pick one photo, then Continue Here to cull from it.")
     }
 
     private var trashButton: some View {
@@ -113,7 +110,6 @@ struct CullGridView: View {
         }
         .buttonStyle(.borderedProminent)
         .controlSize(.large)
-        .disabled(selectedIDs.isEmpty)
         .padding()
         .background(.bar)
         .confirmationDialog(
@@ -131,23 +127,19 @@ struct CullGridView: View {
             : String(localized: "Move \(selectedIDs.count) photos to the Immich trash?")
     }
 
-    private func handleTap(_ asset: ImmichAsset) {
-        if isSelecting {
-            if selectedIDs.contains(asset.id) {
-                selectedIDs.remove(asset.id)
-            } else {
-                selectedIDs.insert(asset.id)
-            }
-        } else {
-            session.jump(to: asset)
-            dismiss()
-        }
+    /// Continue the run from the single selected photo.
+    private func continueFromSelection() {
+        guard selectedIDs.count == 1, let id = selectedIDs.first,
+              let asset = session.queue.first(where: { $0.id == id }) else { return }
+        session.jump(to: asset)
+        dismiss()
     }
 
-    /// Painting is also the way into selection mode — unlike the toolbar button,
-    /// entering this way must keep what the drag has already selected.
+    private func toggleSelect(_ asset: ImmichAsset) {
+        setSelected(asset.id, !selectedIDs.contains(asset.id))
+    }
+
     private func setSelected(_ id: String, _ isSelected: Bool) {
-        isSelecting = true
         if isSelected {
             selectedIDs.insert(id)
         } else {
@@ -155,9 +147,8 @@ struct CullGridView: View {
         }
     }
 
-    private func toggleSelectionMode() {
-        isSelecting.toggle()
-        selectedIDs = []
+    private func toggleSelectAll() {
+        selectedIDs = allSelected ? [] : Set(orderedAssets.map(\.id))
     }
 
     private func confirmTrash() {
@@ -168,7 +159,6 @@ struct CullGridView: View {
         let assets = session.queue.filter { selectedIDs.contains($0.id) }
         session.trashSelected(assets)
         selectedIDs = []
-        isSelecting = false
         if session.queue.isEmpty {
             dismiss()
         }

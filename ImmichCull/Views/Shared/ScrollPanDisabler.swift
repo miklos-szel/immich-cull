@@ -15,6 +15,9 @@ import UIKit
 struct ScrollPanDisabler: UIViewRepresentable {
     /// `true` while painting: the finger must move the selection, not the grid.
     let isPaused: Bool
+    /// Handed the resolved scroll view so a caller can drive `contentOffset`
+    /// directly (edge auto-scroll). Called once the view is resolved.
+    var onResolve: ((UIScrollView) -> Void)?
 
     func makeUIView(context: Context) -> UIView {
         let view = UIView()
@@ -27,6 +30,7 @@ struct ScrollPanDisabler: UIViewRepresentable {
     func updateUIView(_ view: UIView, context: Context) {
         let scrollView = context.coordinator.scrollView(from: view)
         scrollView?.panGestureRecognizer.isEnabled = !isPaused
+        if let scrollView { onResolve?(scrollView) }
     }
 
     static func dismantleUIView(_ view: UIView, coordinator: Coordinator) {

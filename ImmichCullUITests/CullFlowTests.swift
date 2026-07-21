@@ -51,9 +51,12 @@ final class CullFlowTests: XCTestCase {
         // The Stats and Cleanup sections sit above the albums, so scroll the row into view first.
         scrollUntilHittable(testAlbumRow, in: app)
         attachScreenshot(of: app, named: "before-album-tap")
+        // Tapping the album opens its full-screen stream; "Cull" starts the deck.
         forceTap(testAlbumRow)
         attachScreenshot(of: app, named: "after-album-tap")
-        forceTap(app.buttons["Cull 1 Album"])
+        XCTAssertTrue(app.buttons.matching(identifier: "gridCell").firstMatch.waitForExistence(timeout: 15),
+                      "Album stream should load its assets")
+        forceTap(app.buttons["albumStreamCull"])
 
         XCTAssertTrue(app.staticTexts["1 of 5"].waitForExistence(timeout: 15), "First card should load")
 
@@ -90,9 +93,10 @@ final class CullFlowTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["5 of 5"].waitForExistence(timeout: 5))
         app.swipeLeft()
 
-        // Summary screen after the last card.
+        // Summary screen after the last card. The grid was dismissed when culling
+        // started, so the deck sits directly over Home — its "Done" is unambiguous.
         XCTAssertTrue(app.staticTexts["All done"].waitForExistence(timeout: 5))
-        forceTap(app.buttons["Done"])
+        forceTap(app.buttons["Done"]) // deck summary → Home
         XCTAssertTrue(testAlbumRow.waitForExistence(timeout: 5), "Should return to the album list")
     }
 
@@ -108,7 +112,9 @@ final class CullFlowTests: XCTestCase {
         XCTAssertTrue(testAlbumRow.waitForExistence(timeout: 15), "Album list should appear")
         scrollUntilHittable(testAlbumRow, in: app)
         forceTap(testAlbumRow)
-        forceTap(app.buttons["Cull 1 Album"])
+        XCTAssertTrue(app.buttons.matching(identifier: "gridCell").firstMatch.waitForExistence(timeout: 15),
+                      "Album stream should load its assets")
+        forceTap(app.buttons["albumStreamCull"])
         XCTAssertTrue(app.staticTexts["1 of 5"].waitForExistence(timeout: 15), "First card should load")
 
         let undo = app.buttons["Undo"]
@@ -125,30 +131,6 @@ final class CullFlowTests: XCTestCase {
         app.swipeDown() // acting again gives it one
         XCTAssertTrue(app.staticTexts["2 of 5"].waitForExistence(timeout: 5))
         XCTAssertTrue(undo.isEnabled, "Acting again should revive Undo")
-    }
-
-    /// The album you pick moves to the top of the list, directly under
-    /// "Entire Roll". Asserts position, not just that it is selected — a
-    /// selection check alone cannot tell a pinned row from an unmoved one.
-    @MainActor
-    func testSelectedAlbumMovesToTopOfList() throws {
-        resetMockServer()
-        let app = launchConnectedApp()
-
-        // Keepers is the older album, so review order (newest first) puts it
-        // second. Picking it has to override that.
-        let keepers = albumRow(named: "Keepers", in: app)
-        XCTAssertTrue(keepers.waitForExistence(timeout: 15), "Album list should appear")
-        let testAlbum = albumRow(named: "Test Album", in: app)
-        XCTAssertTrue(testAlbum.waitForExistence(timeout: 15), "Test Album row should appear")
-        XCTAssertTrue(testAlbum.frame.minY < keepers.frame.minY,
-                      "Newest album should sort first before any selection")
-
-        scrollUntilHittable(keepers, in: app)
-        forceTap(keepers)
-
-        XCTAssertTrue(keepers.frame.minY < testAlbum.frame.minY,
-                      "The selected album should be pinned above the others")
     }
 
     // MARK: Helpers

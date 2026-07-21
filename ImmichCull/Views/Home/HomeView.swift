@@ -6,12 +6,17 @@ struct HomeView: View {
     @State private var albums: [ImmichAlbum] = []
     @State private var loadError: String?
     @State private var isLoading = true
-    /// Keyed by album ID, not by value: an album's assetCount changes as you
-    /// cull, and a value-keyed selection would strand the old copy.
-    /// Exactly one album at a time; nil means the entire roll.
-    @State private var selectedAlbumID: String?
-    @State private var activeSelection: AlbumSelection?
+    /// The selection whose full-screen stream is open, if any. Every row —
+    /// entire roll, not-in-album, or an album — opens one; culling is launched
+    /// from inside it.
+    @State private var streamSelection: AlbumSelection?
+    /// Set while a stream is dismissing to hand off into the deck; the stream's
+    /// `onDismiss` then promotes it to `cullRequest`. Presenting the deck only
+    /// after the grid has fully dismissed avoids stacking two covers at once.
+    @State private var pendingCull: CullRequest?
+    @State private var cullRequest: CullRequest?
     @State private var isShowingSettings = false
+    @State private var isShowingAbout = false
     @State private var isShowingTrashBin = false
     @State private var trashCount = 0
     /// Cleanup screens are pushed onto this path; emptying it means we're back
@@ -40,6 +45,16 @@ struct HomeView: View {
             // toolbar buttons instead of reserving a large-title header.
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button(action: showAbout) {
+                        Image("Logo")
+                            .resizable()
+                            .scaledToFit()
+                            .frame(height: 28)
+                            .clipShape(.rect(cornerRadius: 6))
+                    }
+                    .accessibilityLabel("About immich-cull")
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     TrashBinToolbarButton(
                         count: trashCount,
@@ -51,13 +66,13 @@ struct HomeView: View {
                     Button("Settings", systemImage: "gearshape", action: showSettings)
                 }
             }
-            .safeAreaInset(edge: .bottom) {
-                startButton
-            }
             // Anything that can trash assets or change album membership
             // refreshes the list on the way back, so counts stay truthful.
             .sheet(isPresented: $isShowingSettings, onDismiss: refreshHome) {
                 SettingsView()
+            }
+            .sheet(isPresented: $isShowingAbout) {
+                AboutView()
             }
             .sheet(isPresented: $isShowingTrashBin, onDismiss: refreshAlbums) {
                 if let client = settings.client {
@@ -69,8 +84,13 @@ struct HomeView: View {
                     }
                 }
             }
-            .fullScreenCover(item: $activeSelection, onDismiss: refreshHome) { selection in
-                CullView(selection: selection)
+            .fullScreenCover(item: $streamSelection, onDismiss: onStreamDismissed) { selection in
+                AlbumStreamView(selection: selection, onStartCull: { startID in
+                    pendingCull = CullRequest(selection: selection, startAssetID: startID)
+                })
+            }
+            .fullScreenCover(item: $cullRequest, onDismiss: refreshHome) { request in
+                CullView(selection: request.selection, startAssetID: request.startAssetID)
             }
             .navigationDestination(for: CleanupRoute.self) { route in
                 CleanupDestinationView(route: route)
@@ -112,17 +132,14 @@ struct HomeView: View {
             // }
 
             Section {
-                EntireRollRowView(isSelected: entireRollSelected, toggle: selectEntireRoll)
-                // One ForEach over a reordered array, not a hoisted row above a
-                // ForEach: moving a row between two different structural slots
-                // changes its identity, so it would teleport rather than slide.
+                EntireRollRowView(open: { streamSelection = .entireLibrary })
+                NotInAnyAlbumRowView(open: { streamSelection = .notInAnyAlbum })
                 ForEach(displayAlbums) { album in
                     AlbumRowView(
                         album: album,
-                        isSelected: selectedAlbumID == album.id,
                         thumbnailURL: thumbnailURL(for: album),
                         apiKey: settings.apiKey,
-                        toggle: { toggle(album) }
+                        open: { streamSelection = .albums([album]) }
                     )
                 }
             } footer: {
@@ -134,40 +151,8 @@ struct HomeView: View {
         .refreshable { await loadAlbums() }
     }
 
-    private var startButton: some View {
-        Button(action: start) {
-            Label(startTitle, systemImage: "rectangle.stack")
-                .frame(maxWidth: .infinity)
-        }
-        .buttonStyle(.borderedProminent)
-        .controlSize(.large)
-        .padding()
-        .background(.bar)
-        .disabled(isLoading && loadError == nil)
-    }
-
-    /// Selection is a single optional ID, so "entire roll" is a fact about it
-    /// rather than a second flag that has to be kept in step.
-    private var entireRollSelected: Bool { selectedAlbumID == nil }
-
-    /// Sorted to match the review order, with the chosen album pulled to the
-    /// top so it sits directly under "Entire Roll" instead of wherever its
-    /// date happens to put it.
     private var displayAlbums: [ImmichAlbum] {
-        let sorted = albums.sorted(by: settings.order)
-        guard let selectedAlbumID,
-              let index = sorted.firstIndex(where: { $0.id == selectedAlbumID }) else {
-            return sorted
-        }
-        var reordered = sorted
-        reordered.insert(reordered.remove(at: index), at: 0)
-        return reordered
-    }
-
-    private var startTitle: String {
-        entireRollSelected
-            ? String(localized: "Cull Entire Roll")
-            : String(localized: "Cull 1 Album")
+        albums.sorted(by: settings.order)
     }
 
     private func thumbnailURL(for album: ImmichAlbum) -> URL? {
@@ -175,31 +160,22 @@ struct HomeView: View {
         return client.thumbnailURL(assetID: assetID, size: "thumbnail")
     }
 
-    private func selectEntireRoll() {
-        withAnimation {
-            selectedAlbumID = nil
+    /// After the grid closes, refresh Home and, if the close was a hand-off into
+    /// culling, present the deck now that no other cover is on screen.
+    private func onStreamDismissed() {
+        refreshHome()
+        if let pendingCull {
+            cullRequest = pendingCull
+            self.pendingCull = nil
         }
-    }
-
-    /// Culling runs against one album at a time, so picking an album replaces
-    /// whatever was picked before; picking it again falls back to the whole roll.
-    private func toggle(_ album: ImmichAlbum) {
-        withAnimation {
-            selectedAlbumID = (selectedAlbumID == album.id) ? nil : album.id
-        }
-    }
-
-    private func start() {
-        guard let selectedAlbumID,
-              let album = albums.first(where: { $0.id == selectedAlbumID }) else {
-            activeSelection = .entireLibrary
-            return
-        }
-        activeSelection = .albums([album])
     }
 
     private func showSettings() {
         isShowingSettings = true
+    }
+
+    private func showAbout() {
+        isShowingAbout = true
     }
 
     private func showTrashBin() {
@@ -241,16 +217,20 @@ struct HomeView: View {
         }
         do {
             albums = try await client.albums()
-            // Forget a selection whose album no longer exists server-side.
-            if let selectedAlbumID, !albums.contains(where: { $0.id == selectedAlbumID }) {
-                self.selectedAlbumID = nil
-            }
             loadError = nil
         } catch {
             loadError = error.localizedDescription
         }
         isLoading = false
     }
+}
+
+/// A request to open the culling deck for a selection, optionally positioned on
+/// a specific photo (tapped in the grid).
+private struct CullRequest: Identifiable {
+    let selection: AlbumSelection
+    let startAssetID: String?
+    var id: String { selection.id + "|" + (startAssetID ?? "") }
 }
 
 #Preview {

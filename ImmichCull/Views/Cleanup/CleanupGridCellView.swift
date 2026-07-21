@@ -27,8 +27,7 @@ struct CleanupGridCellView: View {
             }
         }
         .buttonStyle(.plain)
-        // Lets UI tests find cells without depending on the container type —
-        // the culling grid is a paged TabView, the others are scroll views.
+        // Lets UI tests find cells without depending on the container type.
         .accessibilityIdentifier("gridCell")
         .accessibilityLabel(asset.originalFileName)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
@@ -60,6 +59,9 @@ struct CleanupGridCellView: View {
                     .shadow(radius: 2)
                     .padding(6)
                     .accessibilityHidden(true)
+            }
+            .overlay(alignment: .bottomLeading) {
+                MediaKindBadgeView(asset: asset, compact: true)
             }
     }
 }
