@@ -180,6 +180,11 @@ private struct DragSelectionModifier: ViewModifier {
                 // Re-paint at the held location as new rows scroll under it.
                 scroller.onScroll = { extendSelection(to: lastLocation) }
             }
+            .onDisappear {
+                // The display link outlives the view otherwise — `onEnded` isn't
+                // guaranteed to fire if the drag is interrupted by dismissal.
+                scroller.stop()
+            }
             .onPreferenceChange(DragSelectionFrameKey.self) { frames = $0 }
             // Stays `simultaneousGesture` so taps still reach the cells' own
             // buttons; `highPriorityGesture` would pin the grid too, but it

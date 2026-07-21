@@ -47,12 +47,17 @@ struct RemoteImageView: View {
             image = loaded
             return
         }
+        // A cancelled fetch returns nil just like a 404 does; don't let it fall
+        // through to the fallback or fire onUnavailable, which could make the
+        // caller drop an asset that's actually fine.
+        if Task.isCancelled { return }
         // Immich serves no preview for some assets (404) and answers 400 for
         // ones that are gone, so try the original before giving up.
         if let fallbackURL, let loaded = await fetch(fallbackURL, retries: 1) {
             image = loaded
             return
         }
+        if Task.isCancelled { return }
         didFail = true
         onUnavailable?()
     }

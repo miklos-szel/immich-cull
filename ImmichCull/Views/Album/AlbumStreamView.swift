@@ -103,6 +103,9 @@ struct AlbumStreamView: View {
             } message: {
                 Text(actionError ?? "")
             }
+            // Drop any now-hidden assets from the selection so they can't inflate
+            // the count, force `allSelected`, or get trashed after a filter switch.
+            .onChange(of: filter) { selectedIDs.formIntersection(assets.map(\.id)) }
             .task { await load() }
         }
     }

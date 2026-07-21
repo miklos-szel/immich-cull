@@ -26,21 +26,24 @@ struct CullGridView: View {
         }
     }
 
-    private var allSelected: Bool {
-        !orderedAssets.isEmpty && selectedIDs.count == orderedAssets.count
+    private func allSelected(among assets: [ImmichAsset]) -> Bool {
+        !assets.isEmpty && selectedIDs.count == assets.count
     }
 
     var body: some View {
+        // Sort once per render and thread the result through every consumer,
+        // rather than re-sorting the queue on each read of `orderedAssets`.
+        let assets = orderedAssets
         NavigationStack {
             Group {
-                if session.queue.isEmpty {
+                if assets.isEmpty {
                     ContentUnavailableView {
                         Label("Nothing left", systemImage: "checkmark.seal")
                     } description: {
                         Text("Every photo here has been reviewed.")
                     }
                 } else {
-                    grid
+                    grid(assets: assets)
                 }
             }
             .navigationTitle(title)
@@ -49,14 +52,16 @@ struct CullGridView: View {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Done", action: dismiss.callAsFunction)
                 }
-                if !orderedAssets.isEmpty {
+                if !assets.isEmpty {
                     ToolbarItem(placement: .topBarTrailing) {
                         // Select exactly one photo to continue the run from it.
                         Button("Continue Here", systemImage: "play.rectangle", action: continueFromSelection)
                             .disabled(selectedIDs.count != 1)
                     }
                     ToolbarItem(placement: .topBarTrailing) {
-                        Button(allSelected ? "Deselect All" : "Select All", action: toggleSelectAll)
+                        Button(allSelected(among: assets) ? "Deselect All" : "Select All") {
+                            toggleSelectAll(assets)
+                        }
                     }
                 }
             }
@@ -68,7 +73,7 @@ struct CullGridView: View {
         }
     }
 
-    private var grid: some View {
+    private func grid(assets: [ImmichAsset]) -> some View {
         ScrollView {
             hint
                 .font(.footnote)
@@ -77,7 +82,7 @@ struct CullGridView: View {
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: 3), spacing: 4) {
-                ForEach(orderedAssets) { asset in
+                ForEach(assets) { asset in
                     CleanupGridCellView(
                         asset: asset,
                         isSelected: selectedIDs.contains(asset.id),
@@ -92,7 +97,7 @@ struct CullGridView: View {
             .padding(.horizontal, 4)
         }
         .dragSelection(
-            ids: orderedAssets.map(\.id),
+            ids: assets.map(\.id),
             autoScroll: true,
             isSelected: { selectedIDs.contains($0) },
             onPaint: setSelected
@@ -147,8 +152,8 @@ struct CullGridView: View {
         }
     }
 
-    private func toggleSelectAll() {
-        selectedIDs = allSelected ? [] : Set(orderedAssets.map(\.id))
+    private func toggleSelectAll(_ assets: [ImmichAsset]) {
+        selectedIDs = allSelected(among: assets) ? [] : Set(assets.map(\.id))
     }
 
     private func confirmTrash() {
