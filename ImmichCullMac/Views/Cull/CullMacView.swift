@@ -5,10 +5,12 @@ import SwiftUI
 struct CullMacView: View {
     let selection: AlbumSelection
     let startAssetID: String?
+    /// Returns to the library. Called inline (the deck fills the main window
+    /// rather than a fixed-size sheet, so the window stays resizable).
+    let onClose: () -> Void
 
     @Environment(SettingsStore.self) private var settings
     @Environment(StatsStore.self) private var stats
-    @Environment(\.dismiss) private var dismiss
 
     @State private var session: CullSession?
 
@@ -24,14 +26,14 @@ struct CullMacView: View {
                     case .active:
                         CullDeckMacView(session: session)
                     case .finished:
-                        CullSummaryMacView(session: session) { dismiss() }
+                        CullSummaryMacView(session: session, onDone: onClose)
                     case .failed(let message):
                         ContentUnavailableView {
                             Label("Couldn't start culling", systemImage: "exclamationmark.triangle")
                         } description: {
                             Text(message)
                         } actions: {
-                            Button("Close") { dismiss() }
+                            Button("Close", action: onClose)
                         }
                     }
                 } else {
@@ -44,9 +46,7 @@ struct CullMacView: View {
 
     private var header: some View {
         HStack {
-            Button {
-                dismiss()
-            } label: {
+            Button(action: onClose) {
                 Label("Done", systemImage: "chevron.left")
             }
             .keyboardShortcut(.cancelAction)

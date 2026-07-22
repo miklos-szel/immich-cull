@@ -34,23 +34,30 @@ struct MainView: View {
     @State private var showTrash = false
 
     var body: some View {
-        NavigationSplitView {
-            sidebar
-                .navigationSplitViewColumnWidth(min: 220, ideal: 260)
-        } detail: {
-            detail
-        }
-        .sheet(item: $cullRequest, onDismiss: refresh) { request in
-            CullMacView(selection: request.selection, startAssetID: request.startAssetID)
-                .environment(settings)
-                .frame(minWidth: 820, minHeight: 640)
+        Group {
+            if let request = cullRequest {
+                // The deck fills the whole (resizable) main window rather than a
+                // fixed-size sheet, so the culling window can be resized freely.
+                CullMacView(selection: request.selection, startAssetID: request.startAssetID) {
+                    cullRequest = nil
+                    refresh()
+                }
+            } else {
+                NavigationSplitView {
+                    sidebar
+                        .navigationSplitViewColumnWidth(min: 220, ideal: 260)
+                } detail: {
+                    detail
+                }
+            }
         }
         .sheet(isPresented: $showTrash, onDismiss: refreshTrashLocally) {
             if let client = settings.client {
                 TrashBinMacView(client: client) { removed in
                     trashCount = max(0, trashCount - removed)
                 }
-                .frame(minWidth: 760, minHeight: 560)
+                .frame(minWidth: 760, idealWidth: 1000, maxWidth: .infinity,
+                       minHeight: 560, idealHeight: 760, maxHeight: .infinity)
             }
         }
         .task {
