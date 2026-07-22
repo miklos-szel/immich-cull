@@ -16,6 +16,8 @@ struct SettingsWindow: View {
                 .tabItem { Label("Album", systemImage: "rectangle.stack") }
             ServerSettingsView()
                 .tabItem { Label("Server", systemImage: "server.rack") }
+            ChangelogSettingsView()
+                .tabItem { Label("Changelog", systemImage: "list.bullet.rectangle") }
         }
     }
 }

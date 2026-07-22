@@ -20,7 +20,7 @@ struct ImmichCullMacApp: App {
             SettingsWindow()
                 .environment(settings)
                 .environment(stats)
-                .frame(width: 560, height: 460)
+                .frame(width: 640, height: 500)
         }
     }
 }
