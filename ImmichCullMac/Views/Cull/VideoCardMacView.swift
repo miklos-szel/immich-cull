@@ -1,6 +1,36 @@
 import SwiftUI
 import AVKit
 
+/// Owns the deck's single `AVPlayer` so the deck's keyboard handler can toggle
+/// playback (Space) without reaching into the view. Kept across cards; the URL
+/// is swapped as the deck advances.
+@MainActor
+final class VideoPlaybackController {
+    let player = AVPlayer()
+    private var currentURL: URL?
+
+    func load(url: URL, apiKey: String) {
+        guard currentURL != url else { return }
+        currentURL = url
+        player.pause()
+        let asset = AVURLAsset(url: url, options: [
+            "AVURLAssetHTTPHeaderFieldsKey": ["x-api-key": apiKey]
+        ])
+        player.replaceCurrentItem(with: AVPlayerItem(asset: asset))
+    }
+
+    /// Space toggles play/pause.
+    func toggle() {
+        if player.timeControlStatus == .playing {
+            player.pause()
+        } else {
+            player.play()
+        }
+    }
+
+    func pause() { player.pause() }
+}
+
 /// Plays an Immich video, sending the `x-api-key` header AVPlayer needs (the
 /// plain URL form can't carry it).
 ///
@@ -9,6 +39,7 @@ import AVKit
 /// instantiation on macOS. This is the same reason the iOS app bridges to a
 /// player layer instead of using `VideoPlayer`.
 struct VideoCardMacView: NSViewRepresentable {
+    let controller: VideoPlaybackController
     let url: URL
     let apiKey: String
 
@@ -16,37 +47,13 @@ struct VideoCardMacView: NSViewRepresentable {
         let view = AVPlayerView()
         view.controlsStyle = .inline
         view.videoGravity = .resizeAspect
-        context.coordinator.load(url: url, apiKey: apiKey, into: view)
+        view.player = controller.player
+        controller.load(url: url, apiKey: apiKey)
         return view
     }
 
     func updateNSView(_ nsView: AVPlayerView, context: Context) {
-        // Swap the item when the deck advances to a different video.
-        if context.coordinator.url != url {
-            context.coordinator.load(url: url, apiKey: apiKey, into: nsView)
-        }
-    }
-
-    static func dismantleNSView(_ nsView: AVPlayerView, coordinator: Coordinator) {
-        nsView.player?.pause()
-    }
-
-    func makeCoordinator() -> Coordinator { Coordinator() }
-
-    final class Coordinator {
-        private(set) var url: URL?
-
-        func load(url: URL, apiKey: String, into view: AVPlayerView) {
-            self.url = url
-            let asset = AVURLAsset(url: url, options: [
-                "AVURLAssetHTTPHeaderFieldsKey": ["x-api-key": apiKey]
-            ])
-            let item = AVPlayerItem(asset: asset)
-            if let player = view.player {
-                player.replaceCurrentItem(with: item)
-            } else {
-                view.player = AVPlayer(playerItem: item)
-            }
-        }
+        if nsView.player !== controller.player { nsView.player = controller.player }
+        controller.load(url: url, apiKey: apiKey)
     }
 }

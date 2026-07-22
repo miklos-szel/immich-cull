@@ -9,6 +9,7 @@ struct CullDeckMacView: View {
     @Environment(SettingsStore.self) private var settings
     @FocusState private var focused: Bool
     @State private var showOverview = false
+    @State private var video = VideoPlaybackController()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -24,6 +25,9 @@ struct CullDeckMacView: View {
         .focused($focused)
         .onAppear { focused = true }
         .onKeyPress(phases: .down) { handleKey($0) }
+        // Advancing off a video stops it, so it doesn't keep playing unseen.
+        .onChange(of: session.current?.id) { _, _ in video.pause() }
+        .onDisappear { video.pause() }
         .sheet(isPresented: $showOverview) {
             CullOverviewMacView(session: session) { showOverview = false }
                 .frame(minWidth: 700, minHeight: 520)
@@ -38,7 +42,9 @@ struct CullDeckMacView: View {
             Color(nsColor: .windowBackgroundColor)
             if let current = session.current, let client = settings.client {
                 if current.type == .video {
-                    VideoCardMacView(url: client.videoPlaybackURL(assetID: current.id), apiKey: settings.apiKey)
+                    VideoCardMacView(controller: video,
+                                     url: client.videoPlaybackURL(assetID: current.id),
+                                     apiKey: settings.apiKey)
                         .padding(16)
                 } else {
                     RemoteImageMacView(
@@ -155,6 +161,13 @@ struct CullDeckMacView: View {
     // MARK: Dispatch
 
     private func handleKey(_ press: KeyPress) -> KeyPress.Result {
+        // Space plays/pauses the current video (by default), and is ignored on
+        // photos so it stays free for other uses.
+        if press.key == .space, press.modifiers.isEmpty {
+            guard session.current?.type == .video else { return .ignored }
+            video.toggle()
+            return .handled
+        }
         for action in MacAction.deckActions where settings.matches(press, action) {
             guard isEnabled(action) else { return .handled }
             dispatch(action)
