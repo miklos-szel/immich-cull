@@ -70,6 +70,7 @@ targets:
         MARKETING_VERSION: "1.0"
         CURRENT_PROJECT_VERSION: "1"
         COMBINE_HIDPI_IMAGES: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
   ImmichCullUITests:
     type: bundle.ui-testing
     platform: iOS
