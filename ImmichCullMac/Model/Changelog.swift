@@ -15,6 +15,12 @@ enum Changelog {
     }
 
     static let releases: [ReleaseNote] = [
+        ReleaseNote(version: "1.1", date: "2026-07-22", changes: [
+            "Add selected photos to an album straight from the browse grid.",
+            "Search field to narrow down the album list in the sidebar.",
+            "Press Space in the grid to start culling from the focused photo.",
+            "Returning from the deck scrolls the grid back to where you were, not the top.",
+        ]),
         ReleaseNote(version: "1.0.1", date: "2026-07-22", changes: [
             "Fixed a crash when a video appeared in the culling deck.",
             "The culling window can now be resized freely.",

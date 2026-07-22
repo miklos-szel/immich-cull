@@ -32,13 +32,17 @@ struct MainView: View {
     @State private var trashCount = 0
     @State private var cullRequest: CullRequest?
     @State private var showTrash = false
+    /// After culling, the asset the grid should scroll back to.
+    @State private var revealAssetID: String?
+    @State private var albumSearch = ""
 
     var body: some View {
         Group {
             if let request = cullRequest {
                 // The deck fills the whole (resizable) main window rather than a
                 // fixed-size sheet, so the culling window can be resized freely.
-                CullMacView(selection: request.selection, startAssetID: request.startAssetID) {
+                CullMacView(selection: request.selection, startAssetID: request.startAssetID) { revealID in
+                    revealAssetID = revealID
                     cullRequest = nil
                     refresh()
                 }
@@ -77,7 +81,7 @@ struct MainView: View {
                     .tag(SidebarItem.notInAnyAlbum)
             }
             Section("Albums") {
-                ForEach(displayAlbums) { album in
+                ForEach(sidebarAlbums) { album in
                     Label {
                         VStack(alignment: .leading, spacing: 1) {
                             Text(album.albumName).lineLimit(1)
@@ -94,9 +98,14 @@ struct MainView: View {
                     Text("No albums on this server.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                } else if sidebarAlbums.isEmpty {
+                    Text("No albums match “\(albumSearch)”.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
         }
+        .searchable(text: $albumSearch, placement: .sidebar, prompt: "Search albums")
         .safeAreaInset(edge: .bottom) {
             HStack {
                 Button {
@@ -136,10 +145,14 @@ struct MainView: View {
                 Button("Retry") { Task { await loadAlbums() } }
             }
         } else if let selection {
-            LibraryGridView(selection: selection.selection) { assetID in
+            LibraryGridView(selection: selection.selection, albums: displayAlbums,
+                            revealID: revealAssetID) { assetID in
                 cullRequest = CullRequest(selection: selection.selection, startAssetID: assetID)
-            } onTrashed: {
-                Task { await refreshTrashCount() }
+            } onChanged: {
+                Task {
+                    await loadAlbums()
+                    await refreshTrashCount()
+                }
             }
             .id(selection)
         } else {
@@ -153,6 +166,15 @@ struct MainView: View {
             let l = lhs.sortDate ?? .distantPast
             let r = rhs.sortDate ?? .distantPast
             return settings.order == .newestFirst ? l > r : l < r
+        }
+    }
+
+    /// Albums shown in the sidebar, narrowed by the search field.
+    private var sidebarAlbums: [ImmichAlbum] {
+        let query = albumSearch.trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty else { return displayAlbums }
+        return displayAlbums.filter {
+            $0.albumName.localizedCaseInsensitiveContains(query)
         }
     }
 

@@ -7,8 +7,14 @@ import AppKit
 /// start the culling deck.
 struct LibraryGridView: View {
     let selection: AlbumSelection
+    /// Albums the selection can be filed into (from the sidebar's list).
+    let albums: [ImmichAlbum]
+    /// After returning from the deck, the asset to scroll back into view.
+    let revealID: String?
     let onStartCull: (_ startAssetID: String?) -> Void
-    let onTrashed: () -> Void
+    /// Called after the library is mutated (trashed, or added to an album) so
+    /// the sidebar counts and trash badge refresh.
+    let onChanged: () -> Void
 
     @Environment(SettingsStore.self) private var settings
     @Environment(StatsStore.self) private var stats
@@ -31,7 +37,10 @@ struct LibraryGridView: View {
 
     @State private var columnCount = 1
     @State private var confirmTrash = false
-    @State private var trashError: String?
+    @State private var actionError: String?
+    @State private var toast: String?
+    /// One-shot guard so the reveal-scroll happens only on the first load.
+    @State private var didReveal = false
     @FocusState private var gridFocused: Bool
 
     private enum Phase: Equatable { case loading, loaded, empty, failed(String) }
@@ -50,12 +59,28 @@ struct LibraryGridView: View {
                 // can't inflate the count or get trashed off-screen.
                 selectedIDs.formIntersection(Set(assets.map(\.id)))
             }
-            .alert("Couldn't move to trash", isPresented: Binding(
-                get: { trashError != nil }, set: { if !$0 { trashError = nil } })) {
+            .alert("Something went wrong", isPresented: Binding(
+                get: { actionError != nil }, set: { if !$0 { actionError = nil } })) {
                 Button("OK", role: .cancel) {}
             } message: {
-                Text(trashError ?? "")
+                Text(actionError ?? "")
             }
+            .overlay(alignment: .top) {
+                if let message = toast {
+                    Text(message)
+                        .font(.callout)
+                        .padding(.horizontal, 14).padding(.vertical, 8)
+                        .background(.thinMaterial, in: .capsule)
+                        .shadow(radius: 4)
+                        .padding(.top, 10)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                        .task(id: message) {
+                            try? await Task.sleep(for: .seconds(2))
+                            withAnimation { toast = nil }
+                        }
+                }
+            }
+            .animation(.default, value: toast)
             .confirmationDialog(trashPrompt, isPresented: $confirmTrash, titleVisibility: .visible) {
                 Button("Move to Trash", role: .destructive, action: trashSelected)
                 Button("Cancel", role: .cancel) {}
@@ -85,33 +110,37 @@ struct LibraryGridView: View {
 
     private var grid: some View {
         GeometryReader { proxy in
-            ScrollView {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: settings.thumbnailSize), spacing: spacing)],
-                          spacing: spacing) {
-                    ForEach(assets) { asset in
-                        GridCellView(
-                            asset: asset,
-                            client: settings.client,
-                            apiKey: settings.apiKey,
-                            state: states[asset.id] ?? AssetCullState(),
-                            isSelected: selectedIDs.contains(asset.id),
-                            isCursor: anchorID == asset.id
-                        )
-                        .background(cellFrameReader(for: asset.id))
-                        .onTapGesture { handleClick(asset) }
+            ScrollViewReader { reader in
+                ScrollView {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: settings.thumbnailSize), spacing: spacing)],
+                              spacing: spacing) {
+                        ForEach(assets) { asset in
+                            GridCellView(
+                                asset: asset,
+                                client: settings.client,
+                                apiKey: settings.apiKey,
+                                state: states[asset.id] ?? AssetCullState(),
+                                isSelected: selectedIDs.contains(asset.id),
+                                isCursor: anchorID == asset.id
+                            )
+                            .id(asset.id)
+                            .background(cellFrameReader(for: asset.id))
+                            .onTapGesture { handleClick(asset) }
+                        }
                     }
+                    .padding(spacing)
                 }
-                .padding(spacing)
-            }
-            .coordinateSpace(.named("grid"))
-            .overlay(alignment: .topLeading) { marqueeOverlay }
-            .gesture(marqueeGesture)
-            .onPreferenceChange(CellFrameKey.self) { cellFrames = $0 }
-            .onChange(of: proxy.size.width) { _, width in
-                columnCount = max(1, Int((width + spacing) / (settings.thumbnailSize + spacing)))
-            }
-            .onAppear {
-                columnCount = max(1, Int((proxy.size.width + spacing) / (settings.thumbnailSize + spacing)))
+                .coordinateSpace(.named("grid"))
+                .overlay(alignment: .topLeading) { marqueeOverlay }
+                .gesture(marqueeGesture)
+                .onPreferenceChange(CellFrameKey.self) { cellFrames = $0 }
+                .onChange(of: proxy.size.width) { _, width in
+                    columnCount = max(1, Int((width + spacing) / (settings.thumbnailSize + spacing)))
+                }
+                .onAppear {
+                    columnCount = max(1, Int((proxy.size.width + spacing) / (settings.thumbnailSize + spacing)))
+                    revealIfNeeded(using: reader)
+                }
             }
         }
         .focusable()
@@ -198,6 +227,11 @@ struct LibraryGridView: View {
     // MARK: Keyboard
 
     private func handleKey(_ press: KeyPress) -> KeyPress.Result {
+        // Space opens the culling deck, from the focused/first-selected photo.
+        if press.key == .space, press.modifiers.isEmpty {
+            startCull(at: anchorID)
+            return .handled
+        }
         if settings.matches(press, .selectAll) {
             selectedIDs = Set(assets.map(\.id))
             return .handled
@@ -256,6 +290,19 @@ struct LibraryGridView: View {
                 } label: {
                     Label("Cull from Selection", systemImage: "rectangle.portrait.on.rectangle.portrait.angled")
                 }
+                Menu {
+                    if addableAlbums.isEmpty {
+                        Text("No other albums")
+                    } else {
+                        ForEach(addableAlbums) { album in
+                            Button(album.albumName) { addSelected(to: album) }
+                        }
+                    }
+                } label: {
+                    Label("Add to Album", systemImage: "rectangle.stack.badge.plus")
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
                 Button(role: .destructive) {
                     confirmTrash = true
                 } label: {
@@ -306,13 +353,27 @@ struct LibraryGridView: View {
 
     // MARK: Actions
 
-    private func startCull(forceFirst: Bool = false) {
+    private func startCull(at explicitID: String? = nil, forceFirst: Bool = false) {
         guard !assets.isEmpty else { return }
         if forceFirst { onStartCull(nil); return }
-        // Start at the (first) selected asset if any, else the beginning.
+        // Prefer an explicit photo (the keyboard cursor), then the first
+        // selected, else the beginning.
         let ordered = assets.map(\.id)
-        let start = ordered.first { selectedIDs.contains($0) }
+        let start = explicitID ?? ordered.first { selectedIDs.contains($0) }
         onStartCull(start)
+    }
+
+    /// Scrolls the culled asset back into view when returning from the deck.
+    /// One-shot per grid appearance so later reloads don't yank the scroll.
+    private func revealIfNeeded(using reader: ScrollViewProxy) {
+        guard !didReveal, let revealID, assets.contains(where: { $0.id == revealID }) else { return }
+        didReveal = true
+        DispatchQueue.main.async {
+            withAnimation(.easeInOut) {
+                reader.scrollTo(revealID, anchor: .center)
+            }
+            anchorID = revealID
+        }
     }
 
     private func trashSelected() {
@@ -327,9 +388,35 @@ struct LibraryGridView: View {
         Task {
             do {
                 try await client.trashAssets(ids: serverIDs)
-                onTrashed()
+                onChanged()
             } catch {
-                trashError = error.localizedDescription
+                actionError = error.localizedDescription
+            }
+        }
+    }
+
+    /// Albums the selection can be filed into — all albums except the one
+    /// currently being browsed (adding to it would be a no-op).
+    private var addableAlbums: [ImmichAlbum] {
+        let current = Set(selection.albumIDs ?? [])
+        return albums.filter { !current.contains($0.id) }
+    }
+
+    private func addSelected(to album: ImmichAlbum) {
+        let ids = assets.filter { selectedIDs.contains($0.id) }.map(\.id)
+        guard !ids.isEmpty, let client = settings.client else { return }
+        Task {
+            do {
+                try await client.addAssets(toAlbum: album.id, ids: ids)
+                // Mirror the destination-album badge when it's the configured one.
+                if album.id == settings.destinationAlbumID {
+                    for id in ids { states[id, default: AssetCullState()].isInDestinationAlbum = true }
+                }
+                toast = "Added \(ids.count) to \(album.albumName)"
+                selectedIDs = []
+                onChanged()
+            } catch {
+                actionError = error.localizedDescription
             }
         }
     }

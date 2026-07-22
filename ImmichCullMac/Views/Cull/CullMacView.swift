@@ -5,9 +5,10 @@ import SwiftUI
 struct CullMacView: View {
     let selection: AlbumSelection
     let startAssetID: String?
-    /// Returns to the library. Called inline (the deck fills the main window
+    /// Returns to the library, passing the asset that was on screen so the grid
+    /// can scroll back to it. Called inline (the deck fills the main window
     /// rather than a fixed-size sheet, so the window stays resizable).
-    let onClose: () -> Void
+    let onClose: (_ revealAssetID: String?) -> Void
 
     @Environment(SettingsStore.self) private var settings
     @Environment(StatsStore.self) private var stats
@@ -26,14 +27,14 @@ struct CullMacView: View {
                     case .active:
                         CullDeckMacView(session: session)
                     case .finished:
-                        CullSummaryMacView(session: session, onDone: onClose)
+                        CullSummaryMacView(session: session) { onClose(nil) }
                     case .failed(let message):
                         ContentUnavailableView {
                             Label("Couldn't start culling", systemImage: "exclamationmark.triangle")
                         } description: {
                             Text(message)
                         } actions: {
-                            Button("Close", action: onClose)
+                            Button("Close") { onClose(nil) }
                         }
                     }
                 } else {
@@ -46,7 +47,10 @@ struct CullMacView: View {
 
     private var header: some View {
         HStack {
-            Button(action: onClose) {
+            Button {
+                // Hand back the asset on screen so the grid returns to it.
+                onClose(session?.current?.id)
+            } label: {
                 Label("Done", systemImage: "chevron.left")
             }
             .keyboardShortcut(.cancelAction)
