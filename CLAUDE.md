@@ -16,6 +16,16 @@ xcodebuild -project ImmichCull.xcodeproj -scheme ImmichCull \
 
 Whenever you add a new `.swift` file, you MUST run `xcodegen generate` before building — otherwise the file is not in the target and you get "Cannot find … in scope" at link time even though the file exists.
 
+### macOS target
+
+`ImmichCullMac` (macOS 14+) is a second app target that **shares** `ImmichCull/Models`, `Networking`, and `Services` with the iOS target (cleanup helpers `BlurAnalyzer`/`BlurScanSession`/`ScreenshotDetector` are excluded) and adds its own keyboard-first UI under `ImmichCullMac/`. It reuses `CullSession` unchanged as the culling engine — all the iOS invariants apply. Shared platform seams: `ImageLoader` uses a `PlatformImage` typealias (`UIImage`/`NSImage`); `SettingsStore` gained two additive, macOS-only prefs (`thumbnailSize`, `keyBindings`) that iOS ignores. Keyboard actions live in `MacAction` with a `CullShortcut` value type; the deck/grid dispatch via `.onKeyPress` matching the configured bindings.
+
+```bash
+xcodegen generate
+xcodebuild -project ImmichCull.xcodeproj -scheme ImmichCullMac -destination 'platform=macOS' \
+  DEVELOPMENT_TEAM=<team> CODE_SIGN_STYLE=Automatic build   # signing needed to run (sandbox + Photos)
+```
+
 ### Device build
 
 `./build-ipa.sh` archives and exports a signed `build/ImmichCull.ipa` (development signing, team overridable via `TEAM_ID=…`). Install with:

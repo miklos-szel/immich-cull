@@ -1,4 +1,11 @@
+#if canImport(UIKit)
 import UIKit
+/// The platform's bitmap image type. iOS uses `UIImage`; macOS uses `NSImage`.
+public typealias PlatformImage = UIImage
+#else
+import AppKit
+public typealias PlatformImage = NSImage
+#endif
 
 /// Fetches authenticated Immich images with memory + disk caching.
 final class ImageLoader: Sendable {
@@ -20,7 +27,7 @@ final class ImageLoader: Sendable {
         session.configuration.urlCache?.removeAllCachedResponses()
     }
 
-    func image(at url: URL, apiKey: String) async throws -> UIImage {
+    func image(at url: URL, apiKey: String) async throws -> PlatformImage {
         var request = URLRequest(url: url)
         request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
         let (data, response) = try await session.data(for: request)
@@ -28,10 +35,14 @@ final class ImageLoader: Sendable {
         // Immich 404s previews it hasn't generated (and assets that are gone),
         // which callers handle by falling back to the original.
         guard http.statusCode != 404 else { throw ImmichError.notFound }
-        guard (200..<300).contains(http.statusCode), let image = UIImage(data: data) else {
+        guard (200..<300).contains(http.statusCode), let image = PlatformImage(data: data) else {
             throw ImmichError.badResponse
         }
+        #if canImport(UIKit)
         return image.preparingForDisplay() ?? image
+        #else
+        return image
+        #endif
     }
 
     /// Fire-and-forget warm-up of the cache for upcoming cards.

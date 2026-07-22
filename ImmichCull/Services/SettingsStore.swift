@@ -26,6 +26,9 @@ final class SettingsStore {
         static let swipeDown = "swipeDownAction"
         static let swipeLeft = "swipeLeftAction"
         static let swipeRight = "swipeRightAction"
+        // macOS-only additions; ignored by the iOS app.
+        static let thumbnailSize = "thumbnailSize"
+        static let keyBindings = "keyBindings"
     }
 
     var serverURLString: String {
@@ -104,12 +107,32 @@ final class SettingsStore {
         }
     }
 
+    // MARK: macOS-only preferences
+
+    /// Minimum grid cell size (points) for the macOS browse grid; the column
+    /// count re-flows from it. Ignored on iOS. Default registered at 140.
+    var thumbnailSize: Double {
+        didSet { UserDefaults.standard.set(thumbnailSize, forKey: Keys.thumbnailSize) }
+    }
+
+    /// macOS keyboard bindings, keyed by action id (see the mac target's
+    /// `MacAction`). Persisted as JSON. Empty means "use the built-in defaults",
+    /// which the macOS target fills in on launch.
+    var keyBindings: [String: CullShortcut] {
+        didSet {
+            if let data = try? JSONEncoder().encode(keyBindings) {
+                UserDefaults.standard.set(data, forKey: Keys.keyBindings)
+            }
+        }
+    }
+
     init() {
         // Defaults for toggles that should start enabled.
         UserDefaults.standard.register(defaults: [
             Keys.alsoDeleteFromPhotos: true,
             Keys.includePhotos: true,
             Keys.includeVideos: true,
+            Keys.thumbnailSize: 140.0,
         ])
 
         // UI tests pass this flag to start from a clean slate.
@@ -137,6 +160,13 @@ final class SettingsStore {
         swipeDownAction = SwipeAction(rawValue: defaults.string(forKey: Keys.swipeDown) ?? "") ?? .saveToAlbum
         swipeLeftAction = SwipeAction(rawValue: defaults.string(forKey: Keys.swipeLeft) ?? "") ?? .nextImage
         swipeRightAction = SwipeAction(rawValue: defaults.string(forKey: Keys.swipeRight) ?? "") ?? .previousImage
+        thumbnailSize = defaults.double(forKey: Keys.thumbnailSize)
+        if let data = defaults.data(forKey: Keys.keyBindings),
+           let decoded = try? JSONDecoder().decode([String: CullShortcut].self, from: data) {
+            keyBindings = decoded
+        } else {
+            keyBindings = [:]
+        }
 
         // UI tests can preconfigure the pull-down destination album, since
         // XCUITest cannot reliably tap iOS 26 toolbar buttons to reach Settings.
