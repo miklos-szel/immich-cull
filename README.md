@@ -1,6 +1,6 @@
 # immich-cull
 
-A native iOS app for quickly culling photos and videos on a self-hosted [Immich](https://immich.app) server. Swipe through your library one image at a time and bin, favourite, or file each shot into an album — without waiting on a web UI.
+A native iOS **and macOS** app for quickly culling photos and videos on a self-hosted [Immich](https://immich.app) server. Swipe through your library one image at a time and bin, favourite, or file each shot into an album — without waiting on a web UI. The Mac app is keyboard-first: every action is a configurable shortcut.
 
 > **Disclaimer:** immich-cull is an unofficial, independent project. It is **not affiliated with, endorsed by, or sponsored by** the Immich project or its maintainers. "Immich" is the property of its respective owners.
 
@@ -38,9 +38,25 @@ A native iOS app for quickly culling photos and videos on a self-hosted [Immich]
 - **Stats.** Lifetime counters for deleted / reviewed / filed / favourited, plus the current server trash size, all in Settings.
 - **Appearance.** System (default), Light, or Dark — photos sit on a matching background rather than in a black box.
 
+## macOS app
+
+`ImmichCullMac` is a native macOS 14+ target that shares the iOS app's networking, models, and the `CullSession` culling engine, with a fresh keyboard-first UI:
+
+- **Keyboard-driven culling.** Every action — trash, next image, add to album, favourite, previous, undo — is a shortcut, and each is rebindable in **Settings → Shortcuts**. The deck footer shows the current binding under each button.
+- **Browse grid with macOS-Photos selection.** Click selects one, ⌘-click toggles, ⇧-click ranges, drag paints a marquee, ⌘A selects all, and arrow keys move a cursor. Selected assets can be bulk-trashed or used to start the deck.
+- **Configurable thumbnail size.** A slider in **Settings → Display** re-flows the grid columns live.
+- **Photos-library deletion.** Trashing also removes the matching item from this Mac's Photos library (matched by filename + capture date), the same as on iOS.
+- **Split-view home** over the whole library, the *Not in Any Album* pile, or any album; a trash bin to restore or permanently delete.
+
+```bash
+xcodegen generate
+xcodebuild -project ImmichCull.xcodeproj -scheme ImmichCullMac \
+  -destination 'platform=macOS' build
+```
+
 ## Requirements
 
-- iOS 17 or later
+- iOS 17 or later, **or macOS 14 or later**
 - A reachable Immich server and an API key
 
 ## Getting started

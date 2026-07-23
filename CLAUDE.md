@@ -16,6 +16,24 @@ xcodebuild -project ImmichCull.xcodeproj -scheme ImmichCull \
 
 Whenever you add a new `.swift` file, you MUST run `xcodegen generate` before building — otherwise the file is not in the target and you get "Cannot find … in scope" at link time even though the file exists.
 
+### macOS target
+
+`ImmichCullMac` (macOS 14+) is a second app target that **shares** `ImmichCull/Models`, `Networking`, and `Services` with the iOS target (cleanup helpers `BlurAnalyzer`/`BlurScanSession`/`ScreenshotDetector` are excluded) and adds its own keyboard-first UI under `ImmichCullMac/`. It reuses `CullSession` unchanged as the culling engine — all the iOS invariants apply. Shared platform seams: `ImageLoader` uses a `PlatformImage` typealias (`UIImage`/`NSImage`); `SettingsStore` gained two additive, macOS-only prefs (`thumbnailSize`, `keyBindings`) that iOS ignores. Keyboard actions live in `MacAction` with a `CullShortcut` value type; the deck/grid dispatch via `.onKeyPress` matching the configured bindings.
+
+```bash
+xcodegen generate
+xcodebuild -project ImmichCull.xcodeproj -scheme ImmichCullMac -destination 'platform=macOS' \
+  DEVELOPMENT_TEAM=<team> CODE_SIGN_STYLE=Automatic build   # signing needed to run (sandbox + Photos)
+```
+
+`./build-dmg.sh` packages a universal Release build into `build/ImmichCull-<version>.dmg` (dev-signed, not notarized; `TEAM_ID`/`CONFIGURATION` overridable). The `Settings → Changelog` tab is driven by `ImmichCullMac/Model/Changelog.swift`; the version comes from `MARKETING_VERSION`/`CURRENT_PROJECT_VERSION` in `project.yml`, which the generated Info.plist references via `$(…)` (XcodeGen otherwise hard-codes `1.0` — set both in `info.properties`). No mac UI-test target exists; verify by building, then launching the signed `.app` with `UITEST_SERVER_URL`/`UITEST_API_KEY` set to auto-connect (drive/screenshot via System Events + `screencapture`).
+
+**macOS invariants worth preserving** (each fixed a real bug):
+- **Videos use `AVPlayerView` (AppKit) via `NSViewRepresentable`, never SwiftUI `VideoPlayer`.** `_AVKit_SwiftUI` crashes on class-metadata instantiation on macOS when a video card renders — the same reason iOS bridges to a player layer. Space toggles play/pause through the deck-owned `VideoPlaybackController` (single `AVPlayer`), and advancing off a video pauses it.
+- **The culling deck renders inline in the main window, not a `.sheet`.** A sheet attaches to its parent and can't be resized; inline lets the (resizable) window drive the deck's size. `CullMacView` takes an `onClose(revealAssetID:)` closure instead of `@Environment(\.dismiss)`, handing back the on-screen asset so the grid can scroll to it.
+- **`LibraryGridView` selection is macOS-Photos-style**, read from `NSEvent.modifierFlags` at click time (SwiftUI gives no modifier in a tap): plain click replaces, ⌘ toggles, ⇧ ranges, drag paints a marquee (rect ∩ published cell frames), ⌘A all, Esc clears, arrows move a cursor. Space starts the deck from the cursor; Return is the configurable `startCulling` shortcut. Returning from the deck scrolls to the culled asset once (`revealID` + `didReveal` guard + `ScrollViewReader`).
+- **Settings tabs (`SettingsWindow`) are AX-opaque to `text field`/`menu button` queries** — SwiftUI exposes only an `AXGroup`. Drive them by clicking toolbar buttons by name (the tab bar) and preconfigure state via the sandbox-container defaults (`~/Library/Containers/com.local.ImmichCullMac/Data/Library/Preferences/…`), not `defaults write com.local.ImmichCullMac`.
+
 ### Device build
 
 `./build-ipa.sh` archives and exports a signed `build/ImmichCull.ipa` (development signing, team overridable via `TEAM_ID=…`). Install with:
