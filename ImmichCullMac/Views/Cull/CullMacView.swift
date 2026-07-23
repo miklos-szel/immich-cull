@@ -1,7 +1,8 @@
 import SwiftUI
 
-/// Owns one `CullSession` and presents the deck / summary. Presented as a sheet
-/// over the main window.
+/// Owns one `CullSession` and presents the deck / summary. Rendered inline in
+/// the resizable main window (not a sheet), so the window drives the deck's
+/// size — see `MainView` and the macOS culling convention.
 struct CullMacView: View {
     let selection: AlbumSelection
     let startAssetID: String?

@@ -31,6 +31,14 @@ struct KeyRecorderView: View {
                 }
                 if let shortcut = CullShortcut(press: press) {
                     var bindings = settings.keyBindings
+                    // If another action already resolves to this shortcut (via an
+                    // override or its default), hand it this action's old binding
+                    // rather than leaving it silently shadowed and dead.
+                    if let conflicting = MacAction.allCases.first(where: {
+                        $0 != action && settings.shortcut(for: $0) == shortcut
+                    }) {
+                        bindings[conflicting.rawValue] = settings.shortcut(for: action)
+                    }
                     bindings[action.rawValue] = shortcut
                     settings.keyBindings = bindings
                 }

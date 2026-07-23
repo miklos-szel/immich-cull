@@ -46,6 +46,7 @@ struct CullDeckMacView: View {
                                      url: client.videoPlaybackURL(assetID: current.id),
                                      apiKey: settings.apiKey)
                         .padding(16)
+                        .overlay(alignment: .top) { stateBadges(for: current) }
                 } else {
                     RemoteImageMacView(
                         url: client.thumbnailURL(assetID: current.id),
@@ -113,6 +114,7 @@ struct CullDeckMacView: View {
                 } label: {
                     Label("Grid", systemImage: "square.grid.2x2")
                 }
+                .keyboardShortcut(settings.shortcut(for: .openGrid))
             }
         }
         .padding(12)
@@ -161,16 +163,18 @@ struct CullDeckMacView: View {
     // MARK: Dispatch
 
     private func handleKey(_ press: KeyPress) -> KeyPress.Result {
-        // Space plays/pauses the current video (by default), and is ignored on
-        // photos so it stays free for other uses.
-        if press.key == .space, press.modifiers.isEmpty {
-            guard session.current?.type == .video else { return .ignored }
-            video.toggle()
-            return .handled
-        }
+        // A configured deck-action binding wins first — even a bare Space the
+        // user has bound to an action, which would otherwise be swallowed below.
         for action in MacAction.deckActions where settings.matches(press, action) {
             guard isEnabled(action) else { return .handled }
             dispatch(action)
+            return .handled
+        }
+        // Otherwise bare Space plays/pauses the current video (its default), and
+        // is ignored on photos so it stays free for other uses.
+        if press.key == .space, press.modifiers.isEmpty {
+            guard session.current?.type == .video else { return .ignored }
+            video.toggle()
             return .handled
         }
         return .ignored

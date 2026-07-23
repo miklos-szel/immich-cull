@@ -11,6 +11,10 @@ struct ShortcutsSettingsView: View {
             Section("In the grid") {
                 row(.startCulling)
                 row(.selectAll)
+                row(.openGrid)
+            }
+            Section("Anywhere") {
+                row(.showTrash)
             }
             Section {
                 Button("Reset All to Defaults", role: .destructive) {

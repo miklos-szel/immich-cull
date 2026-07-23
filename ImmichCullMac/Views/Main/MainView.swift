@@ -121,6 +121,7 @@ struct MainView: View {
                     }
                 }
                 .buttonStyle(.borderless)
+                .keyboardShortcut(settings.shortcut(for: .showTrash))
                 Spacer()
                 SettingsLink {
                     Image(systemName: "gearshape")

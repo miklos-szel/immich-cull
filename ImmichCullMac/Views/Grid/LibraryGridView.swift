@@ -381,6 +381,10 @@ struct LibraryGridView: View {
         guard !targets.isEmpty, let client = settings.client else { return }
         let ids = Set(targets.map(\.id))
         let serverIDs = targets.idsIncludingLivePhotoPairs
+        // Snapshots for rollback if the server call fails (copy-on-write, so
+        // these cost nothing until the optimistic mutation below copies).
+        let priorAssets = allAssets
+        let priorPhase = phase
         allAssets.removeAll { ids.contains($0.id) }
         selectedIDs = []
         stats.recordTrashed(count: targets.count)
@@ -390,6 +394,11 @@ struct LibraryGridView: View {
                 try await client.trashAssets(ids: serverIDs)
                 onChanged()
             } catch {
+                // The request failed, so undo the optimistic removal, the trash
+                // tally, and the phase — leave the grid exactly as it was.
+                allAssets = priorAssets
+                stats.recordTrashed(count: -targets.count)
+                phase = priorPhase
                 actionError = error.localizedDescription
             }
         }
