@@ -25,7 +25,7 @@ fi
 
 REPO="miklos-szel/immich-cull"
 TAG="v$VERSION"
-PLIST="ImmichCull/Info.plist"
+PROJECT_YML="project.yml"
 # Staged under build/release/ so it can never collide with build-ipa.sh's
 # signed build/ImmichCull.ipa, which must not be published.
 IPA="build/release/ImmichCull.ipa"
@@ -63,22 +63,40 @@ fi
 # --- version bump ------------------------------------------------------------
 
 # Anything between here and the commit can fail; don't leave a half-bumped
-# plist or a manifest pointing at an asset that was never uploaded.
-restore_tracked() { git checkout -- "$PLIST" apps.json 2>/dev/null || true; }
+# project or a manifest pointing at an asset that was never uploaded.
+restore_tracked() { git checkout -- "$PROJECT_YML" ImmichCull/Info.plist apps.json 2>/dev/null || true; }
 trap restore_tracked ERR INT TERM
 
-PB=/usr/libexec/PlistBuddy
-OLD_BUILD=$("$PB" -c "Print :CFBundleVersion" "$PLIST")
+# The version lives in project.yml as MARKETING_VERSION / CURRENT_PROJECT_VERSION.
+# Info.plist only references them: XcodeGen regenerates that file on every build,
+# so a bump written there is silently thrown away.
+OLD_BUILD=$(sed -n 's/^ *CURRENT_PROJECT_VERSION: *"\{0,1\}\([0-9][0-9]*\)"\{0,1\} *$/\1/p' "$PROJECT_YML")
+if [ -z "$OLD_BUILD" ]; then
+    echo "error: no CURRENT_PROJECT_VERSION in $PROJECT_YML" >&2
+    exit 1
+fi
 NEW_BUILD=$((OLD_BUILD + 1))
-"$PB" -c "Set :CFBundleShortVersionString $VERSION" "$PLIST"
-"$PB" -c "Set :CFBundleVersion $NEW_BUILD" "$PLIST"
-echo "==> $PLIST: version $VERSION, build $NEW_BUILD"
+sed -i '' \
+    -e "s/^\( *MARKETING_VERSION: *\).*/\1\"$VERSION\"/" \
+    -e "s/^\( *CURRENT_PROJECT_VERSION: *\).*/\1\"$NEW_BUILD\"/" \
+    "$PROJECT_YML"
+echo "==> $PROJECT_YML: version $VERSION, build $NEW_BUILD"
 
 # --- build -------------------------------------------------------------------
 
 ./scripts/build-unsigned-ipa.sh
 mkdir -p "$(dirname "$IPA")"
 cp build/ImmichCull-unsigned.ipa "$IPA"
+
+# The version has to survive xcodegen + the build, or SideStore compares the
+# manifest against a differently-versioned bundle and never settles.
+BUILT_PLIST="build/Payload/ImmichCull.app/Info.plist"
+BUILT_VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$BUILT_PLIST")
+BUILT_BUILD=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$BUILT_PLIST")
+if [ "$BUILT_VERSION" != "$VERSION" ] || [ "$BUILT_BUILD" != "$NEW_BUILD" ]; then
+    echo "error: built app is $BUILT_VERSION ($BUILT_BUILD), expected $VERSION ($NEW_BUILD)" >&2
+    exit 1
+fi
 
 # The one artifact that actually leaves this machine — re-check it directly.
 if unzip -l "$IPA" | grep -Eiq 'embedded\.mobileprovision|_CodeSignature'; then
@@ -151,7 +169,7 @@ echo "==> apps.json: $VERSION ($SIZE bytes)"
 # of CDN cache), by which time the asset below is long since uploaded.
 
 trap - ERR INT TERM
-git add "$PLIST" apps.json
+git add "$PROJECT_YML" ImmichCull/Info.plist apps.json
 git commit -m "release: $TAG"
 git tag "$TAG" 2>/dev/null || true
 git push origin main
