@@ -37,8 +37,8 @@ targets:
         # The release version lives here, not in Info.plist — XcodeGen
         # regenerates that file and would overwrite a bump made there.
         # scripts/release.sh rewrites these two lines.
-        MARKETING_VERSION: "1.0"
-        CURRENT_PROJECT_VERSION: "1"
+        MARKETING_VERSION: "1.0.1"
+        CURRENT_PROJECT_VERSION: "2"
         INFOPLIST_KEY_UIUserInterfaceStyle: Automatic
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     scheme:

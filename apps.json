@@ -47,8 +47,8 @@
           "date": "2026-09-01",
           "localizedDescription": "immich-cull 1.0.1",
           "downloadURL": "https://github.com/miklos-szel/immich-cull/releases/download/v1.0.1/ImmichCull.ipa",
-          "size": 2343760,
-          "sha256": "ebd9e21cbd9d35cf59d1369957c4c37e23b6f13586703852e41368d0634f3a5e",
+          "size": 2343761,
+          "sha256": "e520d0c1b47fb85b96c9cad1d0cf14653c5d3dae32af92da1682eb8978eb988c",
           "minOSVersion": "17.0"
         }
       ]
