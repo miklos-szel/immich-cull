@@ -24,6 +24,12 @@ Whenever you add a new `.swift` file, you MUST run `xcodegen generate` before bu
 xcrun devicectl device install app --device <UDID> build/ImmichCull.ipa
 ```
 
+### Releasing
+
+`apps.json` at the repo root is the **SideStore/AltStore source manifest**, served straight off `raw.githubusercontent.com/.../main/apps.json`. `scripts/release.sh <version>` is the only supported way to cut a release: it bumps `Info.plist`, builds the unsigned `.ipa`, publishes the GitHub release, and rewrites `apps.json` to match. The manifest records the asset's exact byte size and sha256, so editing either side by hand desyncs them and breaks installs.
+
+Published `.ipa`s are built by `scripts/build-unsigned-ipa.sh` and are **unsigned** — SideStore re-signs with the installing user's Apple ID. Never publish `build-ipa.sh`'s output: it is development-signed and embeds `embedded.mobileprovision`, which carries the team ID and every registered device UDID. That is why the release script stages its artifact at `build/release/ImmichCull.ipa`, away from `build-ipa.sh`'s `build/ImmichCull.ipa`, and greps the staged zip for signing material before uploading.
+
 ## Architecture
 
 - **`ImmichCull/Models/`** — `Codable` DTOs mirroring the Immich REST API (`ImmichAsset`, `ImmichAlbum`, `DuplicateGroup`, …) and small value types (`SwipeAction`, `SwipeDirection`, `CullOrder`, `AppTheme`). One type per file.
