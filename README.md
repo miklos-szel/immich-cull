@@ -53,7 +53,7 @@ Credentials are stored in the iOS Keychain; the rest of the settings live in `Us
 
 ## Install
 
-immich-cull is distributed as a [SideStore](https://sidestore.io) / [AltStore](https://altstore.io) source. In SideStore, go to **Sources → + ** and add:
+immich-cull is distributed as a [SideStore](https://sidestore.io) / [AltStore](https://altstore.io) source. In SideStore, go to **Sources → +** and add:
 
 ```
 https://raw.githubusercontent.com/miklos-szel/immich-cull/main/apps.json
