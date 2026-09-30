@@ -1,0 +1,58 @@
+{
+  "name": "immich-cull",
+  "identifier": "io.github.miklos-szel.immich-cull",
+  "subtitle": "Swipe through your Immich library and cull it.",
+  "description": "The source for immich-cull, a native iOS app for quickly culling photos and videos on a self-hosted Immich server. Unofficial and not affiliated with the Immich project.",
+  "iconURL": "https://raw.githubusercontent.com/miklos-szel/immich-cull/main/ImmichCull/Assets.xcassets/AppIcon.appiconset/AppIcon.png",
+  "website": "https://github.com/miklos-szel/immich-cull",
+  "tintColor": "#E23B2E",
+  "apps": [
+    {
+      "name": "immich-cull",
+      "bundleIdentifier": "com.local.ImmichCull",
+      "developerName": "Miklos Szel",
+      "subtitle": "Cull your Immich library by swiping.",
+      "localizedDescription": "A native iOS app for quickly culling photos and videos on a self-hosted Immich server. Swipe through your library one image at a time and bin, favourite, or file each shot into an album — without waiting on a web UI.\n\nUnofficial and independent: immich-cull is not affiliated with, endorsed by, or sponsored by the Immich project or its maintainers.\n\n• Swipe to cull. An interactive pager like the Photos app, with every direction mapped to an action you choose — trash, favourite, add to album, next, previous, or undo.\n• Going back doesn't undo. Stepping back to the previous image leaves what you did to it alone. Undo still reverses everything, on the server.\n• Reviewed photos stay reviewed. Moving past an asset tags it in Immich so it isn't offered again next run.\n• Pick your scope. The whole roll, one album, or the \"Not in Any Album\" pile.\n• Browse and bulk-trash. Open any album as a full-screen grid, drag-select across it, and move the lot to the trash in one step.\n• Photos, videos, or both — switchable mid-run. Videos play muted inline while you review them.\n• Trash bin. A live badge counts what's in the Immich trash; open it to restore, permanently delete, or empty it.\n• Local cleanup. Optionally remove the matching item from the iPhone's own photo library when you trash it.\n• Stats, and a system / light / dark appearance setting.\n\nRequires a reachable Immich server and an API key (Immich web UI → Account Settings → API Keys). Credentials are stored in the iOS Keychain.\n\nimmich-cull talks only to the Immich server you point it at: no analytics, no telemetry, no third-party dependencies. Free software under the GNU GPL v3.",
+      "iconURL": "https://raw.githubusercontent.com/miklos-szel/immich-cull/main/ImmichCull/Assets.xcassets/AppIcon.appiconset/AppIcon.png",
+      "tintColor": "#E23B2E",
+      "category": "photo-video",
+      "screenshots": [
+        {
+          "imageURL": "https://raw.githubusercontent.com/miklos-szel/immich-cull/main/docs/screenshots/01-albums.png",
+          "width": 390,
+          "height": 848
+        },
+        {
+          "imageURL": "https://raw.githubusercontent.com/miklos-szel/immich-cull/main/docs/screenshots/02-deck.png",
+          "width": 390,
+          "height": 848
+        },
+        {
+          "imageURL": "https://raw.githubusercontent.com/miklos-szel/immich-cull/main/docs/screenshots/03-grid.png",
+          "width": 390,
+          "height": 848
+        }
+      ],
+      "appPermissions": {
+        "entitlements": [],
+        "privacy": {
+          "NSLocalNetworkUsageDescription": "ImmichCull scans your local network to find Immich servers.",
+          "NSPhotoLibraryUsageDescription": "ImmichCull can remove photos you trash from this iPhone's photo library."
+        }
+      },
+      "versions": [
+        {
+          "version": "1.0.1",
+          "buildVersion": "2",
+          "date": "2026-09-01",
+          "localizedDescription": "immich-cull 1.0.1",
+          "downloadURL": "https://github.com/miklos-szel/immich-cull/releases/download/v1.0.1/ImmichCull.ipa",
+          "size": 2343761,
+          "sha256": "e520d0c1b47fb85b96c9cad1d0cf14653c5d3dae32af92da1682eb8978eb988c",
+          "minOSVersion": "17.0"
+        }
+      ]
+    }
+  ],
+  "news": []
+}
