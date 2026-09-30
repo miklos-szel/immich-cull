@@ -42,6 +42,16 @@
       },
       "versions": [
         {
+          "version": "1.1",
+          "buildVersion": "4",
+          "date": "2026-09-30",
+          "localizedDescription": "**New: immich-cull for macOS.** A keyboard-first Mac app with the same culling engine as the iOS app: browse the library, the unsorted pile, or any album; multi-select like Photos; and cull with configurable shortcuts. Download the `.dmg` below.\n\n**New on both:**\n- Turn \"offer already-culled photos\" on or off straight from the filter menu, in the deck and the browse grids.\n\n**Fixes on both:**\n- Libraries over 5,000 items no longer stall once the first 5,000 are culled.\n- Trashed items are removed from your Photos library when you leave culling, even if you stop partway through.\n- A trash or undo the server rejects is rolled back instead of silently counted, and an undo made just before closing still reaches the server.\n- Safer Photos matching: a photo with no capture date is never deleted on filename alone.\n- Restoring or deleting a Live Photo in the trash now includes its motion part.\n- Nested tags (e.g. `Trips/culled`) are matched and written correctly.\n- Session and lifetime counters no longer drift after undo or going back.\n- Grids show album-membership badges and follow your review order; the trash badge updates immediately.",
+          "downloadURL": "https://github.com/miklos-szel/immich-cull/releases/download/v1.1/ImmichCull.ipa",
+          "size": 2380800,
+          "sha256": "0c576610d3ec341cb34e471609c37e25c6ac325e3dd9461d895339e1977acd40",
+          "minOSVersion": "17.0"
+        },
+        {
           "version": "1.0.1",
           "buildVersion": "2",
           "date": "2026-09-01",
