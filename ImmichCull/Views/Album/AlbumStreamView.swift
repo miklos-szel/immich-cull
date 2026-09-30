@@ -90,7 +90,14 @@ struct AlbumStreamView: View {
                     .disabled(assets.isEmpty)
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    MediaFilterToolbarButton(filter: filter, select: { filter = $0 })
+                    // The grid always shows everything (culled photos carry a
+                    // badge); the toggle decides what a deck started here offers.
+                    MediaFilterToolbarButton(
+                        filter: filter,
+                        select: { filter = $0 },
+                        offersCulled: settings.reOfferChecked,
+                        setOffersCulled: { settings.reOfferChecked = $0 }
+                    )
                 }
                 if !assets.isEmpty {
                     ToolbarItem(placement: .topBarTrailing) {

@@ -29,7 +29,12 @@ final class CullSession {
     /// Cleared for this run by `start()` if the album no longer exists, so a
     /// deleted album reads as "none chosen" instead of failing every swipe.
     private(set) var destinationAlbumID: String
-    private let reOfferChecked: Bool
+    /// Whether assets that were already culled before this run are offered.
+    /// Starts from Settings, switchable mid-run via `setOffersCulled`.
+    private(set) var offersCulled: Bool
+    /// True while turning `offersCulled` on fetches the culled assets the run
+    /// skipped at load.
+    private(set) var isLoadingCulled = false
     /// Tag values (full paths) that mean "already culled" for skipping assets.
     private let checkedTagNames: [String]
     /// The single tag value written when marking an asset culled.
@@ -71,6 +76,16 @@ final class CullSession {
     private var allAssets: [ImmichAsset] = []
     /// Assets the server turned out not to have; never offered again.
     private var droppedIDs: Set<String> = []
+    /// Assets that carried a culled tag when the run loaded. Tags written by
+    /// this run don't count: those assets are reviewed, and handled as such.
+    private var culledAtLoad: Set<String> = []
+    /// Whether `allAssets` includes the culled ones — true when the run
+    /// started with them offered, or once a toggle fetched them.
+    private var didFetchCulled = false
+    /// The asset the run was opened on. Offered even if culled: the user
+    /// picked it.
+    private var focusAssetID: String?
+    private var albumMemberIDs: Set<String> = []
 
     private var checkedTag: ImmichTag?
     private var undoStack: [CullActionRecord] = []
@@ -142,7 +157,7 @@ final class CullSession {
         order = settings.order
         self.mediaFilter = mediaFilter ?? settings.mediaFilter
         destinationAlbumID = settings.destinationAlbumID
-        reOfferChecked = settings.reOfferChecked
+        offersCulled = settings.reOfferChecked
         checkedTagNames = settings.checkedTagNames
         markTagName = settings.markTagName
         alsoDeleteFromPhotos = settings.alsoDeleteFromPhotos
@@ -164,7 +179,10 @@ final class CullSession {
                                                                    alsoTagID: markTag.id)
             await validateDestinationAlbum()
 
-            var assets = try await fetchAllAssets(excluding: reOfferChecked ? [] : checkedIDs)
+            culledAtLoad = checkedIDs
+            self.focusAssetID = focusAssetID
+            didFetchCulled = offersCulled
+            var assets = try await fetchAllAssets(excluding: offersCulled ? [] : checkedIDs)
             if let focusAssetID, !assets.contains(where: { $0.id == focusAssetID }),
                let focus = try? await client.asset(id: focusAssetID),
                !(focus.isTrashed ?? false), mediaFilter.includes(focus.type) {
@@ -173,7 +191,7 @@ final class CullSession {
 
             allAssets = assets
             loadOrder = Dictionary(uniqueKeysWithValues: assets.enumerated().map { ($1.id, $0) })
-            queue = allAssets.filter { mediaFilter.includes($0.type) }
+            queue = allAssets.filter(isOfferable)
             await seedStates(checkedIDs: checkedIDs)
             phase = queue.isEmpty ? .finished : .active
             if let focusAssetID {
@@ -275,21 +293,71 @@ final class CullSession {
     func setMediaFilter(_ filter: MediaTypeFilter) {
         guard filter != mediaFilter else { return }
         mediaFilter = filter
+        refilterQueue()
+    }
 
-        queue.removeAll { !filter.includes($0.type) }
-        let present = Set(queue.map(\.id))
-        // Appended, not merged in original order: anything already queued has a
-        // position that means something, and newly admitted assets have none.
-        queue += allAssets.filter { asset in
-            filter.includes(asset.type)
-                && !present.contains(asset.id)
-                && !reviewedIDs.contains(asset.id)
-                && !droppedIDs.contains(asset.id)
+    /// Offers — or stops offering — assets that were already culled before this
+    /// run, for the rest of it. Same in-place rules as `setMediaFilter`.
+    ///
+    /// Turning it on for a run that loaded without them fetches them first
+    /// (once); a failed fetch leaves the setting off and says so.
+    func setOffersCulled(_ offered: Bool) async {
+        guard offered != offersCulled, !isLoadingCulled else { return }
+        if offered && !didFetchCulled {
+            isLoadingCulled = true
+            defer { isLoadingCulled = false }
+            do {
+                try await loadCulledAssets()
+            } catch {
+                errorMessage = String(localized: "Couldn't load the already-culled photos: \(error.localizedDescription)")
+                return
+            }
         }
+        offersCulled = offered
+        refilterQueue()
+    }
 
-        phase = queue.isEmpty ? .finished : .active
+    /// Whether `asset` belongs in the queue under the current filters.
+    private func isOfferable(_ asset: ImmichAsset) -> Bool {
+        mediaFilter.includes(asset.type)
+            && !reviewedIDs.contains(asset.id)
+            && !droppedIDs.contains(asset.id)
+            && (offersCulled || !culledAtLoad.contains(asset.id) || asset.id == focusAssetID)
+    }
+
+    /// Re-applies the filters to the queue in place. Not rebuilt from
+    /// `allAssets`, because the queue's order carries information a rebuild
+    /// would throw away: the rotation `jump(to:)` established, and the head
+    /// position `undo` inserts at. Newly admitted assets are appended, not
+    /// merged back in load order — they have no position that means anything.
+    private func refilterQueue() {
+        mutate {
+            queue.removeAll { !isOfferable($0) }
+            let present = Set(queue.map(\.id))
+            queue += allAssets.filter { isOfferable($0) && !present.contains($0.id) }
+            phase = queue.isEmpty ? .finished : .active
+        }
         prefetchUpcoming()
-        assertConsistent()
+    }
+
+    /// Fetches the culled assets a run that started without them skipped.
+    private func loadCulledAssets() async throws {
+        let known = Set(allAssets.map(\.id))
+        let culled = culledAtLoad
+        let fetched = try await client.fetchAssets(
+            albumIDs: selection.albumIDs, tagIDs: nil, order: order.apiValue, limit: Self.maxAssets,
+            isNotInAlbum: selection.isNotInAlbum ? true : nil, visibility: "timeline"
+        ) { asset in
+            (asset.type == .image || asset.type == .video) && culled.contains(asset.id) && !known.contains(asset.id)
+        }
+        let states = AssetStateSeeder.states(for: fetched, checkedIDs: culled, albumMemberIDs: albumMemberIDs)
+        for (index, asset) in fetched.enumerated() {
+            loadOrder[asset.id] = allAssets.count + index
+            assetStates[asset.id] = states[asset.id]
+            initialStates[asset.id] = states[asset.id]
+        }
+        allAssets += fetched
+        didFetchCulled = true
     }
 
     /// Continues the run from `asset`: it becomes the current card and the
@@ -711,8 +779,8 @@ final class CullSession {
     /// A failed album-membership lookup is not fatal — the badge is missing
     /// information, not wrong — so it degrades to "not in the album".
     private func seedStates(checkedIDs: Set<String>) async {
-        let members = (try? await AssetStateSeeder.albumMemberIDs(client: client, albumID: destinationAlbumID)) ?? []
-        assetStates = AssetStateSeeder.states(for: allAssets, checkedIDs: checkedIDs, albumMemberIDs: members)
+        albumMemberIDs = (try? await AssetStateSeeder.albumMemberIDs(client: client, albumID: destinationAlbumID)) ?? []
+        assetStates = AssetStateSeeder.states(for: allAssets, checkedIDs: checkedIDs, albumMemberIDs: albumMemberIDs)
         initialStates = assetStates
     }
 

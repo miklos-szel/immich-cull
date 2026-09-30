@@ -103,11 +103,22 @@ struct LibraryGridView: View {
             } actions: {
                 Button("Retry") { Task { await load() } }
             }
-        case .empty:
-            ContentUnavailableView("Nothing here", systemImage: "photo",
-                                   description: Text("No \(filter.label.lowercased()) in this source."))
+        // `.empty` is the source having nothing; the second case is the filter
+        // hiding everything, which otherwise rendered as a blank grid.
+        case .empty, .loaded where assets.isEmpty:
+            ContentUnavailableView("Nothing here", systemImage: filter.systemImage,
+                                   description: Text(emptyDescription))
         case .loaded:
             grid
+        }
+    }
+
+    /// The single-type labels ("Photos Only") don't read as a noun after "No",
+    /// so those name the filter instead.
+    private var emptyDescription: String {
+        switch filter {
+        case .all: String(localized: "No \(filter.label.lowercased()) in this source.")
+        case .photosOnly, .videosOnly: String(localized: "No items match “\(filter.label)” in this source.")
         }
     }
 
@@ -334,13 +345,37 @@ struct LibraryGridView: View {
             Text(selection.title).font(.headline)
         }
         ToolbarItemGroup {
-            Picker("Media", selection: $filter) {
-                ForEach(MediaTypeFilter.allCases) { option in
-                    Label(option.label, systemImage: option.systemImage).tag(option)
+            // A Menu, not a menu-style Picker: the toolbar renders a Picker's
+            // selection icon-only but keeps the title's width, leaving an
+            // empty gap beside the icon.
+            Menu {
+                Picker("Media", selection: $filter) {
+                    ForEach(MediaTypeFilter.allCases) { option in
+                        Label(option.label, systemImage: option.systemImage).tag(option)
+                    }
+                }
+                .pickerStyle(.inline)
+                .labelsHidden()
+                Divider()
+                // The grid always shows everything (culled photos carry a
+                // badge); this decides what a deck started from here offers.
+                Toggle("Offer Already-Culled Photos When Culling", isOn: Binding(
+                    get: { settings.reOfferChecked }, set: { settings.reOfferChecked = $0 }))
+            } label: {
+                // A plain HStack, not a Label: the toolbar forces labels to
+                // icon-only, which hid which filter is active.
+                HStack(spacing: 4) {
+                    Image(systemName: filter.systemImage)
+                    Text(filter.label)
+                    if settings.reOfferChecked {
+                        Image(systemName: "checkmark.seal.fill")
+                            .foregroundStyle(.secondary)
+                            .help("Already-culled photos are offered when culling")
+                    }
                 }
             }
-            .pickerStyle(.menu)
-            .labelsHidden()
+            .fixedSize()
+            .help("Show photos, videos, or both; choose whether culling re-offers culled photos")
 
             if !assets.isEmpty {
                 Button(selectedIDs.count == assets.count ? "Deselect All" : "Select All") {

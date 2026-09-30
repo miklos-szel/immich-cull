@@ -56,7 +56,10 @@ struct CullView: View {
                         if let session {
                             MediaFilterToolbarButton(
                                 filter: session.mediaFilter,
-                                select: session.setMediaFilter
+                                select: session.setMediaFilter,
+                                offersCulled: session.offersCulled,
+                                setOffersCulled: setOffersCulled,
+                                isUpdatingCulled: session.isLoadingCulled
                             )
                         }
                     }
@@ -143,6 +146,13 @@ struct CullView: View {
 
     private func retry() {
         Task { await session?.start() }
+    }
+
+    /// Applies to this run at once, and — like the Settings switch it mirrors —
+    /// is remembered for the next one.
+    private func setOffersCulled(_ offered: Bool) {
+        settings.reOfferChecked = offered
+        Task { await session?.setOffersCulled(offered) }
     }
 
     private func showTrashBin() {
