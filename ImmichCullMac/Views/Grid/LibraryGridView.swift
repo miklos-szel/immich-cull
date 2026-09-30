@@ -103,8 +103,10 @@ struct LibraryGridView: View {
             } actions: {
                 Button("Retry") { Task { await load() } }
             }
-        case .empty:
-            ContentUnavailableView("Nothing here", systemImage: "photo",
+        // `.empty` is the source having nothing; the second case is the filter
+        // hiding everything, which otherwise rendered as a blank grid.
+        case .empty, .loaded where assets.isEmpty:
+            ContentUnavailableView("Nothing here", systemImage: filter.systemImage,
                                    description: Text("No \(filter.label.lowercased()) in this source."))
         case .loaded:
             grid
@@ -334,13 +336,27 @@ struct LibraryGridView: View {
             Text(selection.title).font(.headline)
         }
         ToolbarItemGroup {
-            Picker("Media", selection: $filter) {
-                ForEach(MediaTypeFilter.allCases) { option in
-                    Label(option.label, systemImage: option.systemImage).tag(option)
+            // A Menu, not a menu-style Picker: the toolbar renders a Picker's
+            // selection icon-only but keeps the title's width, leaving an
+            // empty gap beside the icon.
+            Menu {
+                Picker("Media", selection: $filter) {
+                    ForEach(MediaTypeFilter.allCases) { option in
+                        Label(option.label, systemImage: option.systemImage).tag(option)
+                    }
+                }
+                .pickerStyle(.inline)
+                .labelsHidden()
+            } label: {
+                // A plain HStack, not a Label: the toolbar forces labels to
+                // icon-only, which hid which filter is active.
+                HStack(spacing: 4) {
+                    Image(systemName: filter.systemImage)
+                    Text(filter.label)
                 }
             }
-            .pickerStyle(.menu)
-            .labelsHidden()
+            .fixedSize()
+            .help("Show photos, videos, or both")
 
             if !assets.isEmpty {
                 Button(selectedIDs.count == assets.count ? "Deselect All" : "Select All") {
