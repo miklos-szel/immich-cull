@@ -347,16 +347,26 @@ struct LibraryGridView: View {
                 }
                 .pickerStyle(.inline)
                 .labelsHidden()
+                Divider()
+                // The grid always shows everything (culled photos carry a
+                // badge); this decides what a deck started from here offers.
+                Toggle("Offer Already-Culled Photos When Culling", isOn: Binding(
+                    get: { settings.reOfferChecked }, set: { settings.reOfferChecked = $0 }))
             } label: {
                 // A plain HStack, not a Label: the toolbar forces labels to
                 // icon-only, which hid which filter is active.
                 HStack(spacing: 4) {
                     Image(systemName: filter.systemImage)
                     Text(filter.label)
+                    if settings.reOfferChecked {
+                        Image(systemName: "checkmark.seal.fill")
+                            .foregroundStyle(.secondary)
+                            .help("Already-culled photos are offered when culling")
+                    }
                 }
             }
             .fixedSize()
-            .help("Show photos, videos, or both")
+            .help("Show photos, videos, or both; choose whether culling re-offers culled photos")
 
             if !assets.isEmpty {
                 Button(selectedIDs.count == assets.count ? "Deselect All" : "Select All") {

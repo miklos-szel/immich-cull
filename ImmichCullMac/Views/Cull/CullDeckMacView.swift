@@ -153,11 +153,27 @@ struct CullDeckMacView: View {
                     }
                 }
             }
+            Divider()
+            // Applies to this run at once and, like the Settings switch it
+            // mirrors, is remembered for the next.
+            Toggle("Offer Already-Culled Photos", isOn: Binding(
+                get: { session.offersCulled },
+                set: { offered in
+                    settings.reOfferChecked = offered
+                    Task { await session.setOffersCulled(offered) }
+                }))
+                .disabled(session.isLoadingCulled)
         } label: {
-            Label(session.mediaFilter.label, systemImage: session.mediaFilter.systemImage)
+            Label(filterMenuTitle, systemImage: session.mediaFilter.systemImage)
         }
         .menuStyle(.borderlessButton)
         .fixedSize()
+    }
+
+    private var filterMenuTitle: String {
+        session.offersCulled
+            ? String(localized: "\(session.mediaFilter.label), incl. culled")
+            : session.mediaFilter.label
     }
 
     // MARK: Dispatch

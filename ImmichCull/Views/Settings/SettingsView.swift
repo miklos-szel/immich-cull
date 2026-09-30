@@ -83,7 +83,7 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    Toggle("Offer checked photos again", isOn: $settings.reOfferChecked)
+                    Toggle("Offer already-culled photos again", isOn: $settings.reOfferChecked)
                     NavigationLink {
                         TagSelectionView()
                     } label: {

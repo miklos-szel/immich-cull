@@ -202,6 +202,56 @@ final class CullSessionTests: XCTestCase {
         XCTAssertEqual(session.totalCount, 4)
     }
 
+    // MARK: Offering already-culled photos
+
+    func testTurningOnOffersCulledMidRunFetchesAndAppendsThem() async {
+        let ids = server.addAssets(4)
+        server.addTag("culled", on: [ids[1], ids[2]])
+        let session = makeSession()
+        await session.start()
+        XCTAssertEqual(Set(session.queue.map(\.id)), [ids[0], ids[3]])
+        let head = session.current!.id
+
+        await session.setOffersCulled(true)
+
+        XCTAssertTrue(session.offersCulled)
+        XCTAssertEqual(session.current?.id, head, "the card on screen stays put")
+        XCTAssertEqual(Set(session.queue.suffix(2).map(\.id)), [ids[1], ids[2]], "appended, not merged")
+        XCTAssertTrue(session.state(for: session.queue.last!).isChecked)
+        XCTAssertEqual(session.totalCount, 4)
+
+        await session.setOffersCulled(false)
+        XCTAssertEqual(Set(session.queue.map(\.id)), [ids[0], ids[3]])
+    }
+
+    func testReviewedCulledPhotoIsNotOfferedAgainAfterToggling() async {
+        let ids = server.addAssets(3)
+        server.addTag("culled", on: [ids[1]])
+        let session = makeSession { $0.reOfferChecked = true }
+        await session.start(focusAssetID: ids[1])
+        session.skipCurrent()   // reviews the culled photo
+
+        await session.setOffersCulled(false)
+        await session.setOffersCulled(true)
+        await session.close()
+
+        XCTAssertFalse(session.queue.contains { $0.id == ids[1] })
+        XCTAssertEqual(session.reviewedCount, 1)
+    }
+
+    func testTheCulledPhotoYouStartedFromSurvivesTurningItOff() async {
+        let ids = server.addAssets(3)
+        server.addTag("culled", on: [ids[1], ids[2]])
+        let session = makeSession()
+        await session.start(focusAssetID: ids[1])
+
+        await session.setOffersCulled(true)
+        await session.setOffersCulled(false)
+
+        XCTAssertEqual(session.current?.id, ids[1], "picked explicitly, so it stays")
+        XCTAssertFalse(session.queue.contains { $0.id == ids[2] })
+    }
+
     // MARK: Helpers
 
     private func makeSession(stats: StatsStore? = nil,
