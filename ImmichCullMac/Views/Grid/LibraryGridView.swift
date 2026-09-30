@@ -107,9 +107,18 @@ struct LibraryGridView: View {
         // hiding everything, which otherwise rendered as a blank grid.
         case .empty, .loaded where assets.isEmpty:
             ContentUnavailableView("Nothing here", systemImage: filter.systemImage,
-                                   description: Text("No \(filter.label.lowercased()) in this source."))
+                                   description: Text(emptyDescription))
         case .loaded:
             grid
+        }
+    }
+
+    /// The single-type labels ("Photos Only") don't read as a noun after "No",
+    /// so those name the filter instead.
+    private var emptyDescription: String {
+        switch filter {
+        case .all: String(localized: "No \(filter.label.lowercased()) in this source.")
+        case .photosOnly, .videosOnly: String(localized: "No items match “\(filter.label)” in this source.")
         }
     }
 

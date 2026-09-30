@@ -122,7 +122,9 @@ fi
 # --- macOS build -------------------------------------------------------------
 
 # Signed with the development certificate (not notarized) — see build-dmg.sh.
-./build-dmg.sh
+# Pinned: build-dmg.sh honours an inherited CONFIGURATION, but MAC_APP (and the
+# checks below) read the Release product.
+CONFIGURATION=Release ./build-dmg.sh
 cp "build/$DMG_NAME" "$DMG"
 
 MAC_PLIST="$MAC_APP/Contents/Info.plist"
