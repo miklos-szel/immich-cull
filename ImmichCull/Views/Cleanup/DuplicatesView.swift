@@ -104,9 +104,11 @@ struct DuplicatesView: View {
 
     private func trashSelected() {
         let ids = selectedIDs
+        // Include any paired Live Photo movies so they're trashed with the still.
+        let serverIDs = groups.flatMap(\.assets).filter { ids.contains($0.id) }.idsIncludingLivePhotoPairs
         Task {
             do {
-                try await client.trashAssets(ids: Array(ids))
+                try await client.trashAssets(ids: serverIDs)
                 stats.recordTrashed(count: ids.count)
                 groups = groups.compactMap { group in
                     let remaining = group.assets.filter { !ids.contains($0.id) }

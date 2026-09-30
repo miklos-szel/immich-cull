@@ -191,7 +191,9 @@ struct SettingsView: View {
     private func loadTags() async {
         guard let client = settings.client else { return }
         let tags = (try? await client.tags()) ?? []
-        tagNames = tags.map(\.name).sorted {
+        // Full values: the mark tag is upserted by value, so offering a nested
+        // tag's leaf name would create a new root tag instead of using it.
+        tagNames = tags.map(\.value).sorted {
             $0.localizedStandardCompare($1) == .orderedAscending
         }
     }

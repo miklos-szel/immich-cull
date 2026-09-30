@@ -3,9 +3,10 @@ import SwiftUI
 /// Browses the Immich trash and restores selected assets.
 struct TrashBinView: View {
     let client: ImmichClient
-    /// Reports assets that left the trash — restored or permanently deleted —
-    /// so the caller can drop them from state that assumed they were binned.
-    var onAssetsLeftTrash: (Set<String>) -> Void = { _ in }
+    /// Reports assets that left the trash, and whether they were restored (vs.
+    /// permanently deleted), so the caller can drop them from state that
+    /// assumed they were binned — and only a restore takes back the stats.
+    var onAssetsLeftTrash: (_ ids: Set<String>, _ restored: Bool) -> Void = { _, _ in }
 
     @Environment(SettingsStore.self) private var settings
     @Environment(\.dismiss) private var dismiss
@@ -210,12 +211,15 @@ struct TrashBinView: View {
 
     private func restoreSelected() {
         let ids = selectedIDs
+        // With their Live Photo movies: restoring only the still would leave
+        // the motion part in the bin, to be purged when the trash empties.
+        let serverIDs = assets.filter { ids.contains($0.id) }.idsIncludingLivePhotoPairs
         Task {
             do {
-                try await client.restoreAssets(ids: Array(ids))
+                try await client.restoreAssets(ids: serverIDs)
                 assets.removeAll { ids.contains($0.id) }
                 selectedIDs = []
-                onAssetsLeftTrash(ids)
+                onAssetsLeftTrash(ids, true)
             } catch {
                 actionError = error.localizedDescription
                 isShowingActionError = true
@@ -239,41 +243,19 @@ struct TrashBinView: View {
         permanentlyDelete(assets)
     }
 
-    /// Removes the local copies *before* deleting on the server, not after.
-    ///
-    /// Between the two there is a window where the photo is on the phone but
-    /// no longer on the server — which is exactly the state that makes the
-    /// official Immich app's auto-backup upload it again, undoing the delete.
-    /// Doing the server side last keeps that window closed: once the server
-    /// record goes, there is nothing left locally to re-upload.
-    ///
-    /// Failing the local step doesn't abort the server delete — the user asked
-    /// for the photo gone — but it does warn, because that is the case where
-    /// backup can put it back.
+    /// Local copies go first, then the server — see `TrashPurger` for why the
+    /// order matters. A failed local step doesn't abort the server delete, but
+    /// does warn, because that is the case where backup can put it back.
     private func permanentlyDelete(_ toDelete: [ImmichAsset]) {
         let ids = Set(toDelete.map(\.id))
         Task {
             do {
-                var localCopiesRemain = false
-                if await PhotoLibraryService.ensureAccess() {
-                    isSearchingPhotoLibrary = true
-                    let localIDs = await PhotoLibraryService.localIdentifiers(matching: toDelete)
-                    isSearchingPhotoLibrary = false
-                    if !localIDs.isEmpty {
-                        localCopiesRemain = await PhotoLibraryService
-                            .deleteAssets(localIdentifiers: localIDs) == false
-                    }
-                } else {
-                    // Without library access we cannot even look, let alone
-                    // delete — which is precisely the case where backup
-                    // silently restores what was just deleted.
-                    localCopiesRemain = true
+                let localCopiesRemain = try await TrashPurger.permanentlyDelete(toDelete, client: client) { searching in
+                    isSearchingPhotoLibrary = searching
                 }
-
-                try await client.permanentlyDeleteAssets(ids: Array(ids))
                 assets.removeAll { ids.contains($0.id) }
                 selectedIDs.subtract(ids)
-                onAssetsLeftTrash(ids)
+                onAssetsLeftTrash(ids, false)
 
                 if localCopiesRemain {
                     actionError = String(localized: "Deleted from Immich, but the copies are still on this iPhone. If Immich's auto-backup is on, it may upload them again.")

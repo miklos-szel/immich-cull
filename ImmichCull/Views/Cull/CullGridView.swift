@@ -15,14 +15,12 @@ struct CullGridView: View {
 
     /// A stable display order for the overview. The live queue is rotated by
     /// `jump(to:)`, so reading it directly reshuffles the grid every time you dip
-    /// into a photo and come back. Sorting by capture date (newest first — the
-    /// fetch order), with an ID tiebreaker so equal dates can't swap, keeps it put
-    /// without touching the queue the session actually culls from.
+    /// into a photo and come back. Sorting by the session's load order — the
+    /// server's order for the chosen "Review order", oldest-first included —
+    /// keeps it put without touching the queue the session actually culls from.
     private var orderedAssets: [ImmichAsset] {
         session.queue.sorted {
-            let a = $0.takenAt ?? .distantPast
-            let b = $1.takenAt ?? .distantPast
-            return a != b ? a > b : $0.id < $1.id
+            (session.loadOrder[$0.id] ?? .max, $0.id) < (session.loadOrder[$1.id] ?? .max, $1.id)
         }
     }
 

@@ -6,13 +6,18 @@ struct ImmichClient: Sendable {
     let apiKey: String
     private let session: URLSession
 
-    init(serverURL: URL, apiKey: String) {
+    /// Server search pages are fetched at this fixed size. It must not vary
+    /// between pages: Immich turns `page` into an offset of `(page - 1) * size`,
+    /// so shrinking the last request's size re-reads or skips items.
+    private static let pageSize = 250
+
+    /// `configuration` exists for unit tests, which install a stub `URLProtocol`.
+    init(serverURL: URL, apiKey: String, configuration: URLSessionConfiguration = .default) {
         self.serverURL = serverURL
         self.apiKey = apiKey
 
-        let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 30
-        session = URLSession(configuration: config)
+        configuration.timeoutIntervalForRequest = 30
+        session = URLSession(configuration: configuration)
     }
 
     // MARK: Endpoints
@@ -43,63 +48,88 @@ struct ImmichClient: Sendable {
 
     func searchAssets(page: Int, size: Int, order: String, albumIDs: [String]?, tagIDs: [String]?,
                       trashedAfter: String? = nil, withDeleted: Bool? = nil,
-                      type: String? = nil, isNotInAlbum: Bool? = nil) async throws -> SearchResult {
+                      type: String? = nil, isNotInAlbum: Bool? = nil,
+                      visibility: String? = nil, withExif: Bool = true) async throws -> SearchResult {
         let body = SearchRequest(albumIds: albumIDs, isNotInAlbum: isNotInAlbum, order: order,
                                  page: page, size: size, tagIds: tagIDs,
-                                 trashedAfter: trashedAfter, type: type,
-                                 withDeleted: withDeleted, withExif: true)
+                                 trashedAfter: trashedAfter, type: type, visibility: visibility,
+                                 withDeleted: withDeleted, withExif: withExif)
         return try await decode(send("POST", "search/metadata", body: body))
     }
 
-    /// Everything currently in the Immich trash.
+    /// Everything currently in the Immich trash, as the user thinks of it: a
+    /// Live Photo is one item, not a still plus its hidden motion movie.
+    ///
+    /// The motion part is dropped client-side rather than with
+    /// `visibility: "timeline"`, which would also hide archived assets that
+    /// were trashed — leaving them impossible to restore from the bin.
     func trashedAssets(limit: Int = 1000) async throws -> [ImmichAsset] {
-        var assets: [ImmichAsset] = []
-        var page = 1
-        while assets.count < limit {
-            let size = min(250, limit - assets.count)
-            let result = try await searchAssets(page: page, size: size, order: "desc", albumIDs: nil, tagIDs: nil,
-                                                trashedAfter: "1970-01-01T00:00:00.000Z", withDeleted: true)
-            assets += result.assets.items.prefix(limit - assets.count)
-            guard assets.count < limit,
-                  let next = result.assets.nextPage, let nextPage = Int(next) else { break }
-            page = nextPage
+        let assets = try await pagedSearch(limit: limit) { page in
+            try await searchAssets(page: page, size: Self.pageSize, order: "desc", albumIDs: nil, tagIDs: nil,
+                                   trashedAfter: "1970-01-01T00:00:00.000Z", withDeleted: true)
         }
-        return assets.filter { $0.isTrashed ?? true }
+        let motionParts = Set(assets.compactMap(\.livePhotoVideoId))
+        return assets.filter { ($0.isTrashed ?? true) && !motionParts.contains($0.id) }
     }
 
-    /// Pages through metadata search until exhausted or `limit` is reached.
+    /// Pages through metadata search until exhausted or `limit` assets that
+    /// satisfy `include` have been collected.
+    ///
+    /// `include` counts toward the limit, which is the point of it: filtering
+    /// *after* a capped fetch means a library whose first `limit` assets are
+    /// all excluded (e.g. already culled) never yields anything past them.
     func fetchAssets(albumIDs: [String]?, tagIDs: [String]?, order: String, limit: Int,
-                     type: String? = nil, isNotInAlbum: Bool? = nil) async throws -> [ImmichAsset] {
-        var assets: [ImmichAsset] = []
-        var page = 1
-        while assets.count < limit {
-            let size = min(250, limit - assets.count)
-            let result = try await searchAssets(page: page, size: size, order: order, albumIDs: albumIDs,
-                                                tagIDs: tagIDs, type: type, isNotInAlbum: isNotInAlbum)
-            assets += result.assets.items.prefix(limit - assets.count)
-            guard assets.count < limit,
-                  let next = result.assets.nextPage, let nextPage = Int(next) else { break }
-            page = nextPage
+                     type: String? = nil, isNotInAlbum: Bool? = nil,
+                     visibility: String? = nil, withExif: Bool = true,
+                     include: @Sendable (ImmichAsset) -> Bool = { _ in true }) async throws -> [ImmichAsset] {
+        try await pagedSearch(limit: limit, include: include) { page in
+            try await searchAssets(page: page, size: Self.pageSize, order: order, albumIDs: albumIDs,
+                                   tagIDs: tagIDs, type: type, isNotInAlbum: isNotInAlbum,
+                                   visibility: visibility, withExif: withExif)
         }
-        return assets
     }
 
-    /// IDs of every asset carrying any of the named tags — used to badge photos
-    /// that were already culled in a browse grid. Unknown names are skipped.
-    func assetIDs(withAnyTagNamed names: [String]) async throws -> Set<String> {
-        guard !names.isEmpty else { return [] }
-        let tagIDs = try await tags().filter { names.contains($0.name) }.map(\.id)
+    /// IDs of every asset carrying any of the given tags (by full `value`, so a
+    /// nested `Trips/culled` is not confused with a root `culled`). Used to
+    /// badge photos that were already culled; unknown tags are skipped.
+    func assetIDs(withAnyTagValue values: [String]) async throws -> Set<String> {
+        guard !values.isEmpty else { return [] }
+        let tagIDs = try await tags().filter { values.contains($0.value) }.map(\.id)
+        return try await assetIDs(withAnyTagID: tagIDs)
+    }
+
+    /// Union of the assets carrying each tag. One request per tag, in parallel:
+    /// Immich's AND/OR semantics for several `tagIds` aren't worth guessing at.
+    /// EXIF is skipped because only the IDs are wanted and the result can be
+    /// the whole library.
+    func assetIDs(withAnyTagID tagIDs: [String]) async throws -> Set<String> {
         guard !tagIDs.isEmpty else { return [] }
         return try await withThrowingTaskGroup(of: [ImmichAsset].self) { group in
             for tagID in tagIDs {
                 group.addTask {
-                    try await fetchAssets(albumIDs: nil, tagIDs: [tagID], order: "desc", limit: .max)
+                    try await fetchAssets(albumIDs: nil, tagIDs: [tagID], order: "desc", limit: .max,
+                                          withExif: false)
                 }
             }
             var result: Set<String> = []
             for try await assets in group { result.formUnion(assets.map(\.id)) }
             return result
         }
+    }
+
+    /// Shared paging loop: fixed page size, follow `nextPage`, trim to `limit`.
+    private func pagedSearch(limit: Int, include: (ImmichAsset) -> Bool = { _ in true },
+                             page fetch: (Int) async throws -> SearchResult) async throws -> [ImmichAsset] {
+        var assets: [ImmichAsset] = []
+        var page = 1
+        while assets.count < limit {
+            let result = try await fetch(page)
+            assets += result.assets.items.lazy.filter(include).prefix(limit - assets.count)
+            guard assets.count < limit,
+                  let next = result.assets.nextPage, let nextPage = Int(next) else { break }
+            page = nextPage
+        }
+        return assets
     }
 
     func duplicates() async throws -> [DuplicateGroup] {
@@ -119,17 +149,10 @@ struct ImmichClient: Sendable {
 
     /// CLIP-ranked smart search; returns up to `limit` best matches.
     func smartSearchAssets(query: String, limit: Int) async throws -> [ImmichAsset] {
-        var assets: [ImmichAsset] = []
-        var page = 1
-        while assets.count < limit {
-            let size = min(100, limit - assets.count)
-            let body = SmartSearchRequest(query: query, page: page, size: size)
-            let result: SearchResult = try await decode(send("POST", "search/smart", body: body))
-            assets += result.assets.items
-            guard let next = result.assets.nextPage, let nextPage = Int(next) else { break }
-            page = nextPage
+        try await pagedSearch(limit: limit) { page in
+            let body = SmartSearchRequest(query: query, page: page, size: 100)
+            return try await decode(send("POST", "search/smart", body: body))
         }
-        return assets
     }
 
     /// Moves assets to the trash (recoverable); `force` would delete permanently.
@@ -158,10 +181,12 @@ struct ImmichClient: Sendable {
         _ = try await send("DELETE", "albums/\(albumID)/assets", body: BulkIDs(ids: ids))
     }
 
-    /// Creates the tag if needed and returns it.
-    func upsertTag(named name: String) async throws -> ImmichTag {
-        let tags: [ImmichTag] = try await decode(send("PUT", "tags", body: TagUpsertRequest(tags: [name])))
-        guard let tag = tags.first else { throw ImmichError.badResponse }
+    /// Creates the tag if needed and returns it. `value` is the tag's full path
+    /// ("Trips/culled"); upserting a nested path can return its parents too, so
+    /// the exact match is picked rather than the first element.
+    func upsertTag(value: String) async throws -> ImmichTag {
+        let tags: [ImmichTag] = try await decode(send("PUT", "tags", body: TagUpsertRequest(tags: [value])))
+        guard let tag = tags.first(where: { $0.value == value }) ?? tags.last else { throw ImmichError.badResponse }
         return tag
     }
 
@@ -189,6 +214,15 @@ struct ImmichClient: Sendable {
         guard let (_, response) = try? await session.data(for: request),
               let http = response as? HTTPURLResponse else { return true }
         return (200..<300).contains(http.statusCode)
+    }
+
+    /// One asset by ID, or nil if the server no longer has it.
+    func asset(id: String) async throws -> ImmichAsset? {
+        do {
+            return try await get("assets/\(id)")
+        } catch ImmichError.http(let status, _) where status == 400 || status == 404 {
+            return nil
+        }
     }
 
     func originalURL(assetID: String) -> URL {
@@ -264,6 +298,9 @@ struct ImmichClient: Sendable {
         let trashedAfter: String?
         /// "IMAGE" or "VIDEO"; omitted entirely when both are wanted.
         let type: String?
+        /// "timeline" excludes hidden Live Photo motion parts and archived assets;
+        /// omitted returns every visibility level (the server default).
+        let visibility: String?
         let withDeleted: Bool?
         let withExif: Bool?
     }

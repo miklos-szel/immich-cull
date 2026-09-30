@@ -18,11 +18,13 @@ struct TagSelectionView: View {
                 }
             }
             Section {
+                // Full values ("Trips/culled"), not leaf names: two nested
+                // tags can share a leaf, and the value is what a run matches.
                 ForEach(tags) { tag in
                     TagSelectionRowView(
-                        name: tag.name,
-                        isSelected: settings.checkedTagNames.contains(tag.name),
-                        toggle: { toggle(tag.name) }
+                        name: tag.value,
+                        isSelected: settings.checkedTagNames.contains(tag.value),
+                        toggle: { toggle(tag.value) }
                     )
                 }
                 // A tag can be selected and then deleted on the server; keep it
@@ -61,7 +63,7 @@ struct TagSelectionView: View {
     /// would label every selected tag as deleted from the server.
     private var orphanedNames: [String] {
         guard didLoadTags else { return [] }
-        let known = Set(tags.map(\.name))
+        let known = Set(tags.map(\.value))
         return settings.checkedTagNames.filter { !known.contains($0) }
     }
 
@@ -81,7 +83,7 @@ struct TagSelectionView: View {
         }
         do {
             tags = try await client.tags().sorted {
-                $0.name.localizedStandardCompare($1.name) == .orderedAscending
+                $0.value.localizedStandardCompare($1.value) == .orderedAscending
             }
             didLoadTags = true
             loadError = nil

@@ -33,29 +33,22 @@ final class StatsStore {
         favorited = defaults.integer(forKey: Keys.favorited)
     }
 
-    func record(_ kind: CullActionKind) {
-        adjust(kind, by: 1)
+    /// Moves the lifetime totals by a session's change in `CullCounters`.
+    ///
+    /// Deliberately unclamped. The session's counters never go negative, so
+    /// neither does the sum of their deltas; a clamp could only ever fire on a
+    /// decrement whose matching increment then goes through in full, which is
+    /// exactly how the old per-swipe bookkeeping drifted upward.
+    func apply(_ delta: CullCounters) {
+        guard !delta.isZero else { return }
+        trashed += delta.trashed
+        skipped += delta.skipped
+        savedToAlbum += delta.savedToAlbum
+        favorited += delta.favorited
     }
 
-    func revert(_ kind: CullActionKind) {
-        adjust(kind, by: -1)
-    }
-
+    /// For trashing outside a session (the browse grids); negative to roll back.
     func recordTrashed(count: Int) {
-        trashed += count
-    }
-
-    private func adjust(_ kind: CullActionKind, by delta: Int) {
-        switch kind {
-        case .trash: trashed = max(0, trashed + delta)
-        case .skip: skipped = max(0, skipped + delta)
-        case .saveToAlbum: savedToAlbum = max(0, savedToAlbum + delta)
-        case .favorite: favorited = max(0, favorited + delta)
-        // Taking something back out counts against the tally it was added to,
-        // so the lifetime numbers describe what's there rather than how many
-        // times a swipe happened.
-        case .removeFromAlbum: savedToAlbum = max(0, savedToAlbum - delta)
-        case .unfavorite: favorited = max(0, favorited - delta)
-        }
+        apply(CullCounters(trashed: count))
     }
 }
