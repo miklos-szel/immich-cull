@@ -4,9 +4,9 @@ import SwiftUI
 /// also removes the matching local Photos item, per the app-wide rule).
 struct TrashBinMacView: View {
     let client: ImmichClient
-    /// Reports how many assets left the bin (restored or permanently deleted),
-    /// so the caller can decrement its badge locally.
-    let onAssetsLeftTrash: (Int) -> Void
+    /// Reports which assets left the bin and whether they were restored (vs.
+    /// permanently deleted), so the caller can adjust its badge locally.
+    let onAssetsLeftTrash: (_ ids: Set<String>, _ restored: Bool) -> Void
 
     @Environment(SettingsStore.self) private var settings
     @Environment(\.dismiss) private var dismiss
@@ -16,6 +16,7 @@ struct TrashBinMacView: View {
     @State private var phase: Phase = .loading
     @State private var confirmDelete = false
     @State private var actionError: String?
+    @State private var isSearchingPhotoLibrary = false
 
     private enum Phase: Equatable { case loading, loaded, empty, failed(String) }
 
@@ -63,6 +64,19 @@ struct TrashBinMacView: View {
             }
             Button("Close") { dismiss() }.keyboardShortcut(.cancelAction)
         }
+        .overlay {
+            if isSearchingPhotoLibrary {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text("Finding these photos in your Photos library…")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        // A delete is mid-flight while the library search runs; a second
+        // Delete would start another.
+        .disabled(isSearchingPhotoLibrary)
         .padding(12)
     }
 
@@ -125,7 +139,7 @@ struct TrashBinMacView: View {
         guard !targets.isEmpty else { return }
         do {
             try await client.restoreAssets(ids: targets.idsIncludingLivePhotoPairs)
-            finish(removing: Set(targets.map(\.id)))
+            finish(removing: Set(targets.map(\.id)), restored: true)
         } catch {
             actionError = error.localizedDescription
         }
@@ -135,22 +149,24 @@ struct TrashBinMacView: View {
         let targets = assets.filter { selectedIDs.contains($0.id) }
         guard !targets.isEmpty else { return }
         do {
-            try await client.permanentlyDeleteAssets(ids: targets.idsIncludingLivePhotoPairs)
-            // Always mirror the delete into the local Photos library.
-            if await PhotoLibraryService.ensureAccess() {
-                let ids = await PhotoLibraryService.localIdentifiers(matching: targets)
-                await PhotoLibraryService.deleteAssets(localIdentifiers: ids)
+            // Local copies go first, the same as on iOS — see TrashPurger.
+            let localCopiesRemain = try await TrashPurger.permanentlyDelete(targets, client: client) { searching in
+                isSearchingPhotoLibrary = searching
             }
-            finish(removing: Set(targets.map(\.id)))
+            finish(removing: Set(targets.map(\.id)), restored: false)
+            if localCopiesRemain {
+                actionError = String(localized: "Deleted from Immich, but the copies are still in this Mac's Photos library. If they are backed up to Immich again, they will come back.")
+            }
         } catch {
+            isSearchingPhotoLibrary = false
             actionError = error.localizedDescription
         }
     }
 
-    private func finish(removing ids: Set<String>) {
+    private func finish(removing ids: Set<String>, restored: Bool) {
         assets.removeAll { ids.contains($0.id) }
         selectedIDs.subtract(ids)
-        onAssetsLeftTrash(ids.count)
+        onAssetsLeftTrash(ids, restored)
         if assets.isEmpty { phase = .empty }
     }
 }

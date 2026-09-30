@@ -11,10 +11,12 @@ struct LibraryGridView: View {
     let albums: [ImmichAlbum]
     /// After returning from the deck, the asset to scroll back into view.
     let revealID: String?
-    let onStartCull: (_ startAssetID: String?) -> Void
+    /// Also hands over the grid's media filter, so the deck's run contains
+    /// the photo it was started from.
+    let onStartCull: (_ startAssetID: String?, _ filter: MediaTypeFilter) -> Void
     /// Called after the library is mutated (trashed, or added to an album) so
-    /// the sidebar counts and trash badge refresh.
-    let onChanged: () -> Void
+    /// the sidebar counts refresh; `trashed` moves the trash badge locally.
+    let onChanged: (_ trashed: Int) -> Void
 
     @Environment(SettingsStore.self) private var settings
     @Environment(StatsStore.self) private var stats
@@ -45,6 +47,7 @@ struct LibraryGridView: View {
 
     private enum Phase: Equatable { case loading, loaded, empty, failed(String) }
     private let spacing: CGFloat = 6
+    private static let maxAssets = 5000
 
     private var assets: [ImmichAsset] {
         allAssets.filter { filter.includes($0.type) }
@@ -129,6 +132,12 @@ struct LibraryGridView: View {
                         }
                     }
                     .padding(spacing)
+                    if allAssets.count >= Self.maxAssets {
+                        Text("Showing the first \(Self.maxAssets.formatted()) items.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .padding(.bottom, spacing)
+                    }
                 }
                 .coordinateSpace(.named("grid"))
                 .overlay(alignment: .topLeading) { marqueeOverlay }
@@ -308,7 +317,9 @@ struct LibraryGridView: View {
                 } label: {
                     Label("Move \(selectedIDs.count) to Trash", systemImage: "trash")
                 }
-                .keyboardShortcut(.delete, modifiers: [])
+                // The configured binding, not a hardcoded ⌫, so rebinding
+                // Trash in Settings actually moves it.
+                .keyboardShortcut(settings.shortcut(for: .trash))
             }
             .padding(10)
             .background(.bar)
@@ -355,12 +366,12 @@ struct LibraryGridView: View {
 
     private func startCull(at explicitID: String? = nil, forceFirst: Bool = false) {
         guard !assets.isEmpty else { return }
-        if forceFirst { onStartCull(nil); return }
+        if forceFirst { onStartCull(nil, filter); return }
         // Prefer an explicit photo (the keyboard cursor), then the first
         // selected, else the beginning.
         let ordered = assets.map(\.id)
         let start = explicitID ?? ordered.first { selectedIDs.contains($0) }
-        onStartCull(start)
+        onStartCull(start, filter)
     }
 
     /// Scrolls the culled asset back into view when returning from the deck.
@@ -389,10 +400,15 @@ struct LibraryGridView: View {
         selectedIDs = []
         stats.recordTrashed(count: targets.count)
         if assets.isEmpty { phase = .empty }
+        let alsoDeleteLocally = settings.alsoDeleteFromPhotos
         Task {
             do {
                 try await client.trashAssets(ids: serverIDs)
-                onChanged()
+                onChanged(targets.count)
+                // Same rule as the deck: trashing also removes the local copy.
+                if alsoDeleteLocally {
+                    _ = await TrashPurger.deleteLocalCopies(of: targets)
+                }
             } catch {
                 // The request failed, so undo the optimistic removal, the trash
                 // tally, and the phase — leave the grid exactly as it was.
@@ -423,7 +439,7 @@ struct LibraryGridView: View {
                 }
                 toast = "Added \(ids.count) to \(album.albumName)"
                 selectedIDs = []
-                onChanged()
+                onChanged(0)
             } catch {
                 actionError = error.localizedDescription
             }
@@ -444,7 +460,7 @@ struct LibraryGridView: View {
         do {
             let fetched = try await client.fetchAssets(
                 albumIDs: selection.albumIDs, tagIDs: nil, order: settings.order.apiValue,
-                limit: 5000, isNotInAlbum: selection.isNotInAlbum ? true : nil, visibility: "timeline")
+                limit: Self.maxAssets, isNotInAlbum: selection.isNotInAlbum ? true : nil, visibility: "timeline")
             allAssets = fetched.filter { $0.type == .image || $0.type == .video }
             phase = allAssets.isEmpty ? .empty : .loaded
             await seedStates(client: client)
@@ -453,15 +469,9 @@ struct LibraryGridView: View {
         }
     }
 
+    /// Same badges, same rules as the deck — including album membership.
     private func seedStates(client: ImmichClient) async {
-        let checkedIDs = (try? await client.assetIDs(
-            withAnyTagNamed: settings.checkedTagNames + [settings.markTagName])) ?? []
-        states = allAssets.reduce(into: [:]) { result, asset in
-            result[asset.id] = AssetCullState(
-                isFavorite: asset.isFavorite ?? false,
-                isInDestinationAlbum: false,
-                isChecked: checkedIDs.contains(asset.id))
-        }
+        states = await AssetStateSeeder.seed(allAssets, client: client, settings: settings)
     }
 }
 

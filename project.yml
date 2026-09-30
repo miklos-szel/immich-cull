@@ -80,6 +80,29 @@ targets:
         CURRENT_PROJECT_VERSION: "3"
         COMBINE_HIDPI_IMAGES: YES
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+    scheme:
+      testTargets:
+        - ImmichCullTests
+  # Unit tests for the shared layer (CullSession, ImmichClient, the matching
+  # rules). Unhosted and on macOS, so they compile the shared sources directly
+  # and run without a simulator; the server is a URLProtocol stub.
+  ImmichCullTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - ImmichCullTests
+      - path: ImmichCull/Models
+      - path: ImmichCull/Networking
+      - path: ImmichCull/Services
+        excludes:
+          - BlurAnalyzer.swift
+          - BlurScanSession.swift
+          - ScreenshotDetector.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.local.ImmichCullTests
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_IDENTITY: "-"
   ImmichCullUITests:
     type: bundle.ui-testing
     platform: iOS

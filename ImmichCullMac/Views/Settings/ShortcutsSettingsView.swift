@@ -7,11 +7,12 @@ struct ShortcutsSettingsView: View {
         Form {
             Section("While culling") {
                 ForEach(MacAction.deckActions) { row($0) }
+                // Opens the deck's overview grid, so it lives with the deck keys.
+                row(.openGrid)
             }
             Section("In the grid") {
                 row(.startCulling)
                 row(.selectAll)
-                row(.openGrid)
             }
             Section("Anywhere") {
                 row(.showTrash)

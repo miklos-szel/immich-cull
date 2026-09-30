@@ -3,6 +3,9 @@ import SwiftUI
 struct TagsSettingsView: View {
     @Environment(SettingsStore.self) private var settings
     @State private var tags: [ImmichTag] = []
+    /// Orphans are only knowable once the server has answered; before that (or
+    /// after a failed load) every selected tag would look deleted.
+    @State private var didLoadTags = false
 
     var body: some View {
         @Bindable var settings = settings
@@ -14,7 +17,9 @@ struct TagsSettingsView: View {
             }
 
             Section("Treat these tags as already culled") {
-                if tagNames.isEmpty {
+                if !didLoadTags {
+                    Text("Couldn't load tags from the server.").foregroundStyle(.secondary)
+                } else if tagNames.isEmpty {
                     Text("No tags on this server yet.").foregroundStyle(.secondary)
                 }
                 ForEach(tagNames, id: \.self) { name in
@@ -44,15 +49,17 @@ struct TagsSettingsView: View {
         .task { await loadTags() }
     }
 
+    /// Full tag values ("Trips/culled"), not leaf names: two nested tags can
+    /// share a leaf, and the value is what the session matches and upserts.
     private var tagNames: [String] {
-        // Server tags plus any locally-selected names no longer on the server.
-        let server = tags.map(\.name)
-        let orphans = settings.checkedTagNames.filter { !server.contains($0) }
+        // Server tags plus any locally-selected values no longer on the server.
+        let server = tags.map(\.value)
+        let orphans = didLoadTags ? settings.checkedTagNames.filter { !server.contains($0) } : []
         return (server + orphans).sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
     }
 
     private var markOptions: [String] {
-        var names = tags.map(\.name)
+        var names = tags.map(\.value)
         if !settings.markTagName.isEmpty && !names.contains(settings.markTagName) {
             names.insert(settings.markTagName, at: 0)
         }
@@ -69,6 +76,8 @@ struct TagsSettingsView: View {
 
     private func loadTags() async {
         guard let client = settings.client else { return }
-        tags = (try? await client.tags()) ?? []
+        guard let loaded = try? await client.tags() else { return }
+        tags = loaded
+        didLoadTags = true
     }
 }

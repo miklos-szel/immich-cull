@@ -6,6 +6,7 @@ struct ServerSettingsView: View {
 
     @State private var status: String?
     @State private var checking = false
+    @State private var isConfirmingSignOut = false
 
     var body: some View {
         Form {
@@ -30,7 +31,12 @@ struct ServerSettingsView: View {
 
             Section {
                 Button("Sign Out", role: .destructive) {
-                    settings.signOut()
+                    isConfirmingSignOut = true
+                }
+                .confirmationDialog("Sign out and forget this server?",
+                                    isPresented: $isConfirmingSignOut, titleVisibility: .visible) {
+                    Button("Sign Out", role: .destructive) { settings.signOut() }
+                    Button("Cancel", role: .cancel) {}
                 }
             } footer: {
                 Text("Forgets the server address and API key on this Mac.")

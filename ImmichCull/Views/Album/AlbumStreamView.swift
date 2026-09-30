@@ -11,7 +11,11 @@ struct AlbumStreamView: View {
     /// Hands the cull request up to Home, which dismisses this grid and presents
     /// the deck — rather than stacking the deck on top of the grid, which leaves
     /// the grid's toolbar (Select All, etc.) colliding with the deck's.
-    var onStartCull: (String?) -> Void = { _ in }
+    /// Also hands over this grid's media filter, so the deck's run contains
+    /// the photo it was started from.
+    var onStartCull: (_ startAssetID: String?, _ filter: MediaTypeFilter) -> Void = { _, _ in }
+    /// How many assets this grid moved to the trash, for Home's badge.
+    var onTrashed: (Int) -> Void = { _ in }
 
     @Environment(SettingsStore.self) private var settings
     @Environment(StatsStore.self) private var stats
@@ -126,6 +130,12 @@ struct AlbumStreamView: View {
                 }
             }
             .padding(.horizontal, 4)
+            if allAssets.count >= Self.maxAssets {
+                Text("Showing the first \(Self.maxAssets.formatted()) items.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .padding()
+            }
         }
         .dragSelection(
             ids: assets.map(\.id),
@@ -180,7 +190,7 @@ struct AlbumStreamView: View {
     }
 
     private func startCulling(from assetID: String?) {
-        onStartCull(assetID)
+        onStartCull(assetID, filter)
         dismiss()
     }
 
@@ -207,7 +217,7 @@ struct AlbumStreamView: View {
         }
         do {
             allAssets = try await client.fetchAssets(
-                albumIDs: selection.albumIDs, tagIDs: nil, order: "desc",
+                albumIDs: selection.albumIDs, tagIDs: nil, order: settings.order.apiValue,
                 limit: Self.maxAssets, isNotInAlbum: selection.isNotInAlbum ? true : nil,
                 visibility: "timeline"
             )
@@ -222,33 +232,28 @@ struct AlbumStreamView: View {
         await seedStates(client: client)
     }
 
-    /// Marks which photos are already favourited or culled, so the grid shows
-    /// the same badges the deck does. Favourite comes free with the asset; the
-    /// culled set is a tag lookup that degrades to "none" on failure.
+    /// The same badges, by the same rules, as the deck — album membership included.
     private func seedStates(client: ImmichClient) async {
-        let culled = (try? await client.assetIDs(
-            withAnyTagNamed: settings.checkedTagNames + [settings.markTagName]
-        )) ?? []
-        states = allAssets.reduce(into: [:]) { result, asset in
-            result[asset.id] = AssetCullState(
-                isFavorite: asset.isFavorite ?? false,
-                isInDestinationAlbum: false,
-                isChecked: culled.contains(asset.id)
-            )
-        }
+        states = await AssetStateSeeder.seed(allAssets, client: client, settings: settings)
     }
 
     private func trashSelected() {
         guard let client = settings.client else { return }
         let ids = selectedIDs
-        // Include any paired Live Photo movies so they're trashed with the still.
-        let serverIDs = allAssets.filter { ids.contains($0.id) }.idsIncludingLivePhotoPairs
+        let targets = allAssets.filter { ids.contains($0.id) }
+        let alsoDeleteLocally = settings.alsoDeleteFromPhotos
         Task {
             do {
-                try await client.trashAssets(ids: serverIDs)
-                stats.recordTrashed(count: ids.count)
+                // Include any paired Live Photo movies so they're trashed with the still.
+                try await client.trashAssets(ids: targets.idsIncludingLivePhotoPairs)
+                stats.recordTrashed(count: targets.count)
                 allAssets.removeAll { ids.contains($0.id) }
                 selectedIDs = []
+                onTrashed(targets.count)
+                // Same rule as the deck: trashing also removes the local copy.
+                if alsoDeleteLocally {
+                    _ = await TrashPurger.deleteLocalCopies(of: targets)
+                }
             } catch {
                 actionError = error.localizedDescription
                 isShowingActionError = true

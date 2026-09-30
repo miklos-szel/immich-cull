@@ -10,6 +10,11 @@ struct CullView: View {
     /// When set, the deck opens already positioned on this photo — used when a
     /// grid cell's cull icon launches the run from a specific image.
     var startAssetID: String?
+    /// The launching grid's filter, so the photo it started from is in the run.
+    var mediaFilter: MediaTypeFilter?
+    /// Called on close with how much the Immich bin grew during this screen,
+    /// so Home can move its badge without re-reading the lagging statistics.
+    var onClose: (_ trashDelta: Int) -> Void = { _ in }
 
     @State private var session: CullSession?
     @State private var isShowingTrashBin = false
@@ -18,6 +23,10 @@ struct CullView: View {
     /// badge adds this session's own trashed count on top, so it updates
     /// instantly instead of waiting on a server statistics round-trip.
     @State private var trashBaseline = 0
+    /// Items that were in the bin before this session and left it through the
+    /// bin sheet here — the part of the change `session.trashedCount` can't see.
+    @State private var preexistingRemoved = 0
+    @State private var isClosing = false
 
     var body: some View {
         NavigationStack {
@@ -27,6 +36,7 @@ struct CullView: View {
                 .toolbar {
                     ToolbarItem(placement: .topBarLeading) {
                         Button("Close", systemImage: "xmark", action: close)
+                            .disabled(isClosing)
                     }
                     ToolbarItem(placement: .principal) {
                         Button(action: showGrid) {
@@ -61,14 +71,23 @@ struct CullView: View {
                         }
                     }
                 }
+                .safeAreaInset(edge: .bottom) {
+                    if session?.isSearchingPhotoLibrary == true {
+                        PhotoLibrarySearchNoticeView()
+                            .padding()
+                            .background(.bar)
+                    }
+                }
         }
         .sheet(isPresented: $isShowingTrashBin) {
             if let client = settings.client {
-                TrashBinView(client: client) { ids in
+                TrashBinView(client: client) { ids, restored in
                     // Items this session trashed drop out of session.trashedCount;
                     // the rest came from the pre-existing bin contents.
-                    let ownedBySession = session?.forgetTrashedAssets(ids: ids) ?? 0
-                    trashBaseline = max(0, trashBaseline - (ids.count - ownedBySession))
+                    let ownedBySession = session?.forgetTrashedAssets(ids: ids, restored: restored) ?? 0
+                    let preexisting = ids.count - ownedBySession
+                    trashBaseline = max(0, trashBaseline - preexisting)
+                    preexistingRemoved += preexisting
                 }
             }
         }
@@ -103,8 +122,9 @@ struct CullView: View {
                     Button("Retry", action: retry)
                 }
             case .finished:
+                // No photo cleanup here: it runs on close (`CullSession.close`),
+                // so an early exit gets it too and "Undo Last" can't outrun it.
                 CullSummaryView(session: session, done: close)
-                    .task { await session.deleteTrashedFromPhotosIfEnabled() }
             case .active:
                 CullDeckView(session: session, client: client)
             }
@@ -115,12 +135,10 @@ struct CullView: View {
 
     private func startSession() async {
         guard session == nil, let client = settings.client else { return }
-        let newSession = CullSession(settings: settings, client: client, selection: selection, stats: stats)
+        let newSession = CullSession(settings: settings, client: client, selection: selection,
+                                     stats: stats, mediaFilter: mediaFilter)
         session = newSession
-        await newSession.start()
-        if let startAssetID {
-            newSession.jump(toID: startAssetID)
-        }
+        await newSession.start(focusAssetID: startAssetID)
     }
 
     private func retry() {
@@ -143,7 +161,15 @@ struct CullView: View {
         }
     }
 
+    /// Closing ends the session: queued server work finishes and this run's
+    /// trashes leave the iPhone library (iOS confirms) before the screen goes.
     private func close() {
-        dismiss()
+        guard !isClosing else { return }
+        isClosing = true
+        Task {
+            await session?.close()
+            onClose((session?.trashedCount ?? 0) - preexistingRemoved)
+            dismiss()
+        }
     }
 }

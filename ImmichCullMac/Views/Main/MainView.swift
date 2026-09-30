@@ -1,29 +1,28 @@
 import SwiftUI
 
 /// A sidebar source (library / unsorted / a specific album).
+///
+/// Albums are identified by ID, not by the `ImmichAlbum` value: that value
+/// changes whenever its asset count does (e.g. after trashing from it), and a
+/// value-keyed selection then matched no row and the sidebar lost its highlight.
 enum SidebarItem: Hashable {
     case entireLibrary
     case notInAnyAlbum
-    case album(ImmichAlbum)
-
-    var selection: AlbumSelection {
-        switch self {
-        case .entireLibrary: .entireLibrary
-        case .notInAnyAlbum: .notInAnyAlbum
-        case .album(let album): .albums([album])
-        }
-    }
+    case album(id: String)
 }
 
 /// A request to open the culling deck for a selection, optionally at a photo.
 struct CullRequest: Identifiable {
     let selection: AlbumSelection
     let startAssetID: String?
+    /// The grid's filter when the deck was launched from it.
+    let mediaFilter: MediaTypeFilter?
     var id: String { selection.id + "|" + (startAssetID ?? "") }
 }
 
 struct MainView: View {
     @Environment(SettingsStore.self) private var settings
+    @Environment(\.scenePhase) private var scenePhase
 
     @State private var albums: [ImmichAlbum] = []
     @State private var loadError: String?
@@ -41,10 +40,14 @@ struct MainView: View {
             if let request = cullRequest {
                 // The deck fills the whole (resizable) main window rather than a
                 // fixed-size sheet, so the culling window can be resized freely.
-                CullMacView(selection: request.selection, startAssetID: request.startAssetID) { revealID in
+                CullMacView(selection: request.selection, startAssetID: request.startAssetID,
+                            mediaFilter: request.mediaFilter) { revealID, trashed in
                     revealAssetID = revealID
                     cullRequest = nil
-                    refresh()
+                    // Local, not a statistics re-read: that endpoint lags the
+                    // writes that just happened and would show the old total.
+                    trashCount += trashed
+                    refreshAlbums()
                 }
             } else {
                 NavigationSplitView {
@@ -55,10 +58,10 @@ struct MainView: View {
                 }
             }
         }
-        .sheet(isPresented: $showTrash, onDismiss: refreshTrashLocally) {
+        .sheet(isPresented: $showTrash, onDismiss: refreshAlbums) {
             if let client = settings.client {
-                TrashBinMacView(client: client) { removed in
-                    trashCount = max(0, trashCount - removed)
+                TrashBinMacView(client: client) { ids, _ in
+                    trashCount = max(0, trashCount - ids.count)
                 }
                 .frame(minWidth: 760, idealWidth: 1000, maxWidth: .infinity,
                        minHeight: 560, idealHeight: 760, maxHeight: .infinity)
@@ -67,6 +70,15 @@ struct MainView: View {
         .task {
             await loadAlbums()
             await refreshTrashCount()
+        }
+        // Catches edits made elsewhere (e.g. the Immich web UI) — the one time
+        // re-reading the statistics is right, as no local write just happened.
+        .onChange(of: scenePhase) { _, phase in
+            guard phase == .active else { return }
+            Task {
+                await loadAlbums()
+                await refreshTrashCount()
+            }
         }
     }
 
@@ -92,7 +104,7 @@ struct MainView: View {
                     } icon: {
                         Image(systemName: "rectangle.stack")
                     }
-                    .tag(SidebarItem.album(album))
+                    .tag(SidebarItem.album(id: album.id))
                 }
                 if albums.isEmpty && !isLoading {
                     Text("No albums on this server.")
@@ -145,20 +157,26 @@ struct MainView: View {
             } actions: {
                 Button("Retry") { Task { await loadAlbums() } }
             }
-        } else if let selection {
-            LibraryGridView(selection: selection.selection, albums: displayAlbums,
-                            revealID: revealAssetID) { assetID in
-                cullRequest = CullRequest(selection: selection.selection, startAssetID: assetID)
-            } onChanged: {
-                Task {
-                    await loadAlbums()
-                    await refreshTrashCount()
-                }
+        } else if let selection, let source = albumSelection(for: selection) {
+            LibraryGridView(selection: source, albums: displayAlbums,
+                            revealID: revealAssetID) { assetID, filter in
+                cullRequest = CullRequest(selection: source, startAssetID: assetID, mediaFilter: filter)
+            } onChanged: { trashed in
+                trashCount += trashed
+                refreshAlbums()
             }
             .id(selection)
         } else {
             ContentUnavailableView("Pick a source", systemImage: "sidebar.left",
                                    description: Text("Choose the library, the unsorted pile, or an album to begin."))
+        }
+    }
+
+    private func albumSelection(for item: SidebarItem) -> AlbumSelection? {
+        switch item {
+        case .entireLibrary: .entireLibrary
+        case .notInAnyAlbum: .notInAnyAlbum
+        case .album(let id): albums.first { $0.id == id }.map { .albums([$0]) }
         }
     }
 
@@ -181,16 +199,10 @@ struct MainView: View {
 
     // MARK: Data
 
-    private func refresh() {
-        Task {
-            await loadAlbums()
-            await refreshTrashCount()
-        }
-    }
-
-    /// The trash sheet already reports what left the bin; re-reading the lagging
-    /// statistics endpoint here would put the pre-restore total back.
-    private func refreshTrashLocally() {
+    /// Album counts only. The trash badge is adjusted locally by whoever
+    /// changed the bin: the statistics endpoint lags writes, so re-reading it
+    /// right after one puts the stale total back.
+    private func refreshAlbums() {
         Task { await loadAlbums() }
     }
 

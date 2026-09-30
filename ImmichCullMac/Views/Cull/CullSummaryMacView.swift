@@ -1,8 +1,7 @@
 import SwiftUI
 
-/// Shown when the queue empties. Its `.task` runs the local Photos cleanup —
-/// guarded one-shot inside `CullSession`, so re-entering `.finished` (via a
-/// media-filter narrow/widen) won't re-fire the system delete confirmation.
+/// Shown when the queue empties. The local Photos cleanup runs when the
+/// session is closed (`CullSession.close`), not here — so "Done" triggers it.
 struct CullSummaryMacView: View {
     let session: CullSession
     let onDone: () -> Void
@@ -31,10 +30,6 @@ struct CullSummaryMacView: View {
         }
         .padding(40)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .task {
-            // Removes the trashed items from the Mac's Photos library (must-have).
-            await session.deleteTrashedFromPhotosIfEnabled()
-        }
     }
 
     private func stat(_ title: String, _ value: Int, _ symbol: String, _ tint: Color) -> some View {

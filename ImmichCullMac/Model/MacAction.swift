@@ -23,6 +23,29 @@ enum MacAction: String, CaseIterable, Identifiable, Sendable {
     /// The actions shown while culling, in footer order.
     static let deckActions: [MacAction] = [.trash, .nextImage, .saveToAlbum, .favorite, .previousImage, .undo]
 
+    /// Where a binding is live. Two actions only collide when some screen
+    /// listens for both.
+    enum Scope { case deck, grid, everywhere }
+
+    var scope: Scope {
+        switch self {
+        case .trash, .nextImage, .saveToAlbum, .favorite, .previousImage, .undo, .openGrid: .deck
+        case .startCulling, .selectAll: .grid
+        case .showTrash: .everywhere
+        }
+    }
+
+    /// Whether this action and `other` can ever be live at the same time.
+    /// Trash is dispatched from both the deck and the grid, so it collides
+    /// with either.
+    func sharesScope(with other: MacAction) -> Bool {
+        let scopes: (MacAction) -> Set<Scope> = { action in
+            action == .trash ? [.deck, .grid] : [action.scope]
+        }
+        let mine = scopes(self), theirs = scopes(other)
+        return mine.contains(.everywhere) || theirs.contains(.everywhere) || !mine.isDisjoint(with: theirs)
+    }
+
     var label: String {
         switch self {
         case .trash: "Trash"

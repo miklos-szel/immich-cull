@@ -79,18 +79,25 @@ struct HomeView: View {
                     // The badge drops locally rather than by refetching: Immich's
                     // statistics endpoint lags writes, so an immediate re-read
                     // would report the pre-restore total.
-                    TrashBinView(client: client) { ids in
+                    TrashBinView(client: client) { ids, _ in
                         trashCount = max(0, trashCount - ids.count)
                     }
                 }
             }
             .fullScreenCover(item: $streamSelection, onDismiss: onStreamDismissed) { selection in
-                AlbumStreamView(selection: selection, onStartCull: { startID in
-                    pendingCull = CullRequest(selection: selection, startAssetID: startID)
+                AlbumStreamView(selection: selection, onStartCull: { startID, filter in
+                    pendingCull = CullRequest(selection: selection, startAssetID: startID, mediaFilter: filter)
+                }, onTrashed: { count in
+                    trashCount += count
                 })
             }
-            .fullScreenCover(item: $cullRequest, onDismiss: refreshHome) { request in
-                CullView(selection: request.selection, startAssetID: request.startAssetID)
+            // The trash badge moves by what the deck reports rather than by a
+            // statistics re-read, which would lag the writes it just made.
+            .fullScreenCover(item: $cullRequest, onDismiss: refreshAlbums) { request in
+                CullView(selection: request.selection, startAssetID: request.startAssetID,
+                         mediaFilter: request.mediaFilter) { trashDelta in
+                    trashCount = max(0, trashCount + trashDelta)
+                }
             }
             .navigationDestination(for: CleanupRoute.self) { route in
                 CleanupDestinationView(route: route)
@@ -163,7 +170,7 @@ struct HomeView: View {
     /// After the grid closes, refresh Home and, if the close was a hand-off into
     /// culling, present the deck now that no other cover is on screen.
     private func onStreamDismissed() {
-        refreshHome()
+        refreshAlbums()
         if let pendingCull {
             cullRequest = pendingCull
             self.pendingCull = nil
@@ -200,9 +207,9 @@ struct HomeView: View {
         }
     }
 
-    /// Deliberately not called when the trash sheet closes: that sheet already
-    /// reported what left the bin, and re-reading the lagging statistics
-    /// endpoint would put the stale total back.
+    /// Only where no local write just happened (launch, returning to the app,
+    /// Settings): after the bin, the deck, or a grid trash, the badge is moved
+    /// locally, since the lagging statistics endpoint would report the old total.
     private func refreshTrashCount() async {
         guard let client = settings.client else { return }
         if let stats = try? await client.trashStatistics() {
@@ -230,6 +237,7 @@ struct HomeView: View {
 private struct CullRequest: Identifiable {
     let selection: AlbumSelection
     let startAssetID: String?
+    let mediaFilter: MediaTypeFilter?
     var id: String { selection.id + "|" + (startAssetID ?? "") }
 }
 

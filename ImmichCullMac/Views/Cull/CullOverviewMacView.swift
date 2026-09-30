@@ -8,6 +8,14 @@ struct CullOverviewMacView: View {
 
     @Environment(SettingsStore.self) private var settings
 
+    /// Load order, not the live queue: `jump(to:)` rotates the queue, so
+    /// reading it directly reshuffles the grid every time you jump and return.
+    private var orderedAssets: [ImmichAsset] {
+        session.queue.sorted {
+            (session.loadOrder[$0.id] ?? .max, $0.id) < (session.loadOrder[$1.id] ?? .max, $1.id)
+        }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             HStack {
@@ -19,7 +27,7 @@ struct CullOverviewMacView: View {
             Divider()
             ScrollView {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: settings.thumbnailSize), spacing: 6)], spacing: 6) {
-                    ForEach(session.queue) { asset in
+                    ForEach(orderedAssets) { asset in
                         Button {
                             session.jump(toID: asset.id)
                             onClose()

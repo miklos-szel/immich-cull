@@ -34,8 +34,10 @@ struct KeyRecorderView: View {
                     // If another action already resolves to this shortcut (via an
                     // override or its default), hand it this action's old binding
                     // rather than leaving it silently shadowed and dead.
+                    // Only within a shared scope: the grid's Return and the
+                    // deck's keys never listen at once, so they don't collide.
                     if let conflicting = MacAction.allCases.first(where: {
-                        $0 != action && settings.shortcut(for: $0) == shortcut
+                        $0 != action && $0.sharesScope(with: action) && settings.shortcut(for: $0) == shortcut
                     }) {
                         bindings[conflicting.rawValue] = settings.shortcut(for: action)
                     }
